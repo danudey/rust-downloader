@@ -8,8 +8,4 @@ reqwest = { version = "0.12.15", features = ["blocking", "json"] }
 clap = { version = "4.5.37", features = ["derive"] }
 indicatif = { version = "0.17.11"}
 url = { version = "2.5.4"}
-futures = "0.3.31" # for our async / await blocks
-tokio = { version = "1.44.2", features = ["full"] } # for our async runtime
-# mime = { version = "0.3.17"}
-# mime_guess = { version = "2.0.5"}
-# filenamify = { version = "0.1.2" }
+content_disposition = { version = "0.4.0" }
