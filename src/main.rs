@@ -20,13 +20,15 @@ struct Cli {
 
 fn download_file<'a>(urls: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
 
+    let mut failed_download = false;
+
     // Set our progress bar components
     let style = ProgressStyle::with_template("{prefix:.blue} {wide_bar:.blue/white} {percent}% • {bytes:.green}/{total_bytes:.green} • {binary_bytes_per_sec:.red} • {eta:.cyan}  ")
     .unwrap()
     .progress_chars("━╸━");
 
+    let errstyle = ProgressStyle::with_template("{prefix:.red} [error] {msg:} ").unwrap();
     let multiprog = Arc::new(MultiProgress::new());
-    
     let mut handles: Vec<JoinHandle<_>> = vec![];
 
     for url in urls {
@@ -38,13 +40,22 @@ fn download_file<'a>(urls: Vec<String>) -> Result<(), Box<dyn std::error::Error>
         // Make our HTTP request and get our response (headers)
         let response = blocking::get(url).map_err(|e| format!("Failed to send request: {}", e))?;
 
+        // Instantiate our progress bar
+        let pb: ProgressBar = multiprog.add(ProgressBar::new(0).with_style(style.clone()));
+
         // Bail out if some bad stuff happened
         if response.status().is_server_error() {
-            println!("Got HTTP server error: {} {}", response.status().as_str(), response.status().canonical_reason().unwrap());
-            exit(1);
+            let errstr = format!("{}: server returned {} {}", parsed_url.as_str(), response.status().as_str(), response.status().canonical_reason().unwrap());
+            pb.set_style(errstyle.clone());
+            pb.finish_with_message(errstr);
+            failed_download = true;
+            continue;
         } else if  response.status().is_client_error() {
-            println!("Got HTTP error: {} {}", response.status().as_str(), response.status().canonical_reason().unwrap());
-            exit(2);
+            let errstr = format!("{}: server returned {} {}", parsed_url.as_str(), response.status().as_str(), response.status().canonical_reason().unwrap());
+            pb.set_style(errstyle.clone());
+            pb.finish_with_message(errstr);
+            failed_download = true;
+            continue;
         }
 
         // Check the Content-Length header if we got one; otherwise, set it to zero
@@ -52,6 +63,8 @@ fn download_file<'a>(urls: Vec<String>) -> Result<(), Box<dyn std::error::Error>
             Some(length) => length,
             None => 0
         };
+
+        pb.set_length(content_length );
 
         let disposition = match response.headers().get("Content-Disposition") {
             Some(value) => value.to_str().unwrap(),
@@ -66,24 +79,12 @@ fn download_file<'a>(urls: Vec<String>) -> Result<(), Box<dyn std::error::Error>
         };
 
         if output_filename.trim().is_empty() {
-            println!("Cannot download URL: it doesn't have a file name so we don't know what to do");
-            exit(3);
+            let errstr = format!("{}: no filename could be detected from the URL or Content-Disposition headers", parsed_url.as_str());
+            pb.set_style(errstyle.clone());
+            pb.finish_with_message(errstr);
+            failed_download = true;
+            continue;
         }
-
-        // let disposition = match response.headers().get("Content-Disposition") {
-        //     Some(val) => val.to_str().unwrap(),
-        //     None => ""
-        // };
-
-
-        // if !disposition.is_empty() {
-        //     let parsed_disposition = parse_content_disposition(disposition);
-        //     print!("{}", parsed_disposition.filename().unwrap());
-        // }
-
-        // Instantiate our progress bar; if we have a content length, we can use that
-        // for the length of the input; otherwise, just use an indeterminate spinner
-        let pb: ProgressBar = multiprog.add(ProgressBar::new(content_length).with_style(style.clone()));
 
         // Set the prefix to our filename so we can display it
         pb.set_prefix(String::from(url_filename));
@@ -94,12 +95,17 @@ fn download_file<'a>(urls: Vec<String>) -> Result<(), Box<dyn std::error::Error>
         let handle = thread::spawn(move || {
             // ...and write the data to it as we get it
             let _ = copy(&mut pb.wrap_read(response), &mut dest).map_err(|e| format!("Failed to copy content: {}", e));
+            pb.finish_with_message("msg");
         });
         handles.push(handle);
     }
 
     for handle in handles {
         let _ = handle.join();
+    }
+
+    if failed_download {
+        exit(1);
     }
 
     Ok(())
