@@ -1,27 +1,17 @@
-use std::{fs::File, process::exit};
-use std::sync::Arc;
-use std::io::copy;
-use std::thread::{self, JoinHandle};
-use std::str::Bytes;
 
-use cookie::CookieJar;
-use reqwest::{blocking, ClientBuilder};
-use browsercookie::{Attribute, Browser, CookieFinder};
-use cookie_store::CookieStore;
+use browsercookie::{Browser, CookieFinder};
 use reqwest_cookie_store;
 use clap::Parser;
-use regex::Regex;
 
-use reqwest::header::{self, HeaderValue, InvalidHeaderValue, USER_AGENT, ACCEPT};
+use reqwest::header::{self, HeaderValue};
 use futures::executor;
 
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::ProgressStyle;
 
 use url;
 use url::Url;
 
-use publicsuffix::{Psl, List};
-use content_disposition::{parse_content_disposition, DispositionType};
+use publicsuffix::Psl;
 
 #[derive(Parser)]
 struct Cli {
@@ -67,7 +57,7 @@ impl reqwest::cookie::CookieStore for CookieJarWrapper {
 
 fn download_file<'a>(urls: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
 
-    let mut failed_download = false;
+    let failed_download = false;
 
     // Set our progress bar components
     let style = ProgressStyle::with_template("{prefix:.blue} {wide_bar:.blue/white} {percent}% • {bytes:.green}/{total_bytes:.green} • {binary_bytes_per_sec:.red} • {eta:.cyan}  ")
