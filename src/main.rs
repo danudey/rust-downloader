@@ -185,4 +185,5 @@ fn main() {
     let args= Cli::parse();
 
     let _ = download_file(args.urls).map_err(|e| println!("Application error: {}", e));
+
 }

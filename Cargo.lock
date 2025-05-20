@@ -567,7 +567,7 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "download"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "browser-cookie",
  "clap",
@@ -576,14 +576,8 @@ dependencies = [
  "cookie_store",
  "futures",
  "indicatif",
- "psl",
- "publicsuffix",
  "regex",
- "regexp",
  "reqwest",
- "reqwest_cookie_store",
- "tokio",
- "tokio-util",
  "url",
 ]
 
@@ -1677,15 +1671,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "psl"
-version = "2.1.108"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4d0b873458f19667df558849359edcc4786da36ce54c8668fd5d1c36c22b080"
-dependencies = [
- "psl-types",
-]
-
-[[package]]
 name = "psl-types"
 version = "2.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1796,16 +1781,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 
 [[package]]
-name = "regexp"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b045baed9fc5b2e285a599a42fb158bc483e1b6104de3a93d24bf4addd4727e"
-dependencies = [
- "lazy_static",
- "regex",
-]
-
-[[package]]
 name = "reqwest"
 version = "0.12.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1850,18 +1825,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "windows-registry",
-]
-
-[[package]]
-name = "reqwest_cookie_store"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0b36498c7452f11b1833900f31fbb01fc46be20992a50269c88cf59d79f54e9"
-dependencies = [
- "bytes",
- "cookie_store",
- "reqwest",
- "url",
 ]
 
 [[package]]
