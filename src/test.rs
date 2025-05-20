@@ -11,8 +11,6 @@ use indicatif::ProgressStyle;
 use url;
 use url::Url;
 
-use publicsuffix::Psl;
-
 #[derive(Parser)]
 struct Cli {
     /// The URL to download from
