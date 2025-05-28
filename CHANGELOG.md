@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/danudey/rust-downloader/compare/download-v0.2.1...download-v0.2.2) (2025-05-28)
+
+
+### Bug Fixes
+
+* use rusttls instead of openssl ([3121f93](https://github.com/danudey/rust-downloader/commit/3121f932aabc27dc06591457afb54d447194fb3a))
+
 ## 0.2.1 (2025-05-28)
 
 
