@@ -103,9 +103,10 @@ fn download_file<'a>(urls: Vec<String>) -> Result<(), Box<dyn std::error::Error>
         // Make our HTTP request and get our response (headers)
         let request = client
             .get(url.clone())
-            .headers(headers.clone()).build().unwrap();
+            .headers(headers.clone())
+            .build()
+            .unwrap();
         let response = client.execute(request).unwrap();
-
 
         // let response = reqwest::blocking::Client::builder().build()?.get(url).send();
 
