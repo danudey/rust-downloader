@@ -3,12 +3,16 @@ use std::sync::Arc;
 use std::io::copy;
 use std::thread::{self, JoinHandle};
 
-use browsercookie::{Browser, CookieFinder};
 use clap::Parser;
 
-use reqwest::cookie::CookieStore;
-use reqwest::header::{self};
-use futures::executor;
+
+
+use tldextract::{TldExtractor, TldOption};
+
+use rookie::{firefox, common::enums::CookieToString, common::enums::Cookie};
+
+use reqwest::header::{self, HeaderValue};
+// use futures::executor;
 
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
@@ -25,12 +29,74 @@ struct Cli {
 
 #[derive(Default)]
 struct CookieJarWrapper {
-    jar: cookie::CookieJar,
 }
 
 impl CookieJarWrapper {
-    fn new(jar: cookie::CookieJar) -> Self {
-        Self { jar }
+    fn new() -> Self {
+        Self{}
+    }
+}
+
+fn cookie_matches_url(cookie: &Cookie, url: &url::Url) -> bool {
+    // Here's how we match cookies to URLs:
+    // 1. The cookie should have a path, and the URL should start with that path
+    // 2. The cookie should have a domain, and
+    //    a. The cookie domain and URL domain should be identical; or
+    //    b. The URL domain should end with the cookie domain and have a single dot '.' before it
+    //
+    // To clarify 2b:
+    //
+    // Cookie domain        URL domain          Result
+    // -----------------------------------------------
+    // here.foo.com         here.foo.com        OK (domains are identical)
+    //
+    //                            cookie domain
+    //                            ┌──────────┐
+    // here.foo.com         there.here.foo.com  OK (URL domain ends with cookie doman and there's a '.' before it)
+    //                           └─ dot in front of cookie domain section, so we're ok
+    //
+    //                            cookie domain
+    //                            ┌──────────┐
+    // here.foo.com              where.foo.com       NO (URL domain ends with cookie domain but there's not a '.' before it)
+    //                           └─ no dot in front of cookie domain section, so we're not ok
+    let cookie_domain_noprefix = match cookie.domain.strip_prefix(".") {
+        Some(cookie_domain) => cookie_domain,
+        None => cookie.domain.as_str()
+    };
+
+    let url_domain = url.domain().unwrap();
+    let domain_offset = match url_domain.find(cookie_domain_noprefix) {
+        Some(offset) => offset,
+        None => 0
+    };
+    
+    // If domain_offset is 0 (or less?), then no
+    let last_char_before_cookie_domain_is_periodt = if domain_offset <= 0 {
+        false
+    } else {
+        // If domain_offset > 0, then
+        match url_domain.chars().nth(domain_offset-1) {
+            // If the character before domain_offset is a '.', then yes
+            Some(char) => char == '.',
+            // Otherwise, no
+            None => false
+        }
+    };
+
+    let url_path_matches = url.path().starts_with(cookie.path.as_str());
+    let cookie_domain_is_url_domain = cookie.domain == url_domain;
+    let url_domain_ends_with_cookie_domain = url_domain.ends_with(cookie_domain_noprefix);
+    // We need to make sure the URL path starts with the cookie path
+    if url_path_matches &&
+        // If the cookie domain and the URL domain are identical, we pass
+        (cookie_domain_is_url_domain ||
+            // If the URL domain ends with the cookie domain AND the last character before the
+            // cookie domain appears in the URL domain is a dot, we pass
+            (url_domain_ends_with_cookie_domain && last_char_before_cookie_domain_is_periodt)
+        ) {
+        true
+    } else {
+        false
     }
 }
 
@@ -38,16 +104,24 @@ impl reqwest::cookie::CookieStore for CookieJarWrapper {
     fn set_cookies(&self, _cookie_headers: &mut dyn Iterator<Item = &reqwest::header::HeaderValue>, url: &url::Url) {
         println!("Throwing away new cookie from {}", url.as_str())
     }
-    fn cookies(&self, url: &url::Url) -> Option<reqwest::header::HeaderValue> {
-        let s = self.jar.iter().filter_map(
+    fn cookies(&self, url: &url::Url) -> Option<HeaderValue> {
+        let extractor: TldExtractor = TldOption::default().build();
+        let tldinfo = extractor.extract(url.as_str()).unwrap();    
+        let together = format!("{}.{}", tldinfo.domain.unwrap(), tldinfo.suffix.unwrap());
+
+        let cookies = firefox(Some(vec![together.clone().into()])).unwrap();
+
+        let s = cookies.into_iter().filter_map(
             |cookie|
-            if url.domain()?.ends_with(cookie.domain()?) && url.path().starts_with(cookie.path()?) {
-                Some(cookie.encoded().stripped().to_string())
-            } else {
-                None
+            {
+                if cookie_matches_url(&cookie, &url) {
+                    Some(cookie)
+                } else {
+                    None
+                }
             }
         ).collect::<Vec<_>>()
-        .join("; ");
+        .to_string();
 
         if s.is_empty() {
             return None;
@@ -67,14 +141,6 @@ fn download_file<'a>(urls: Vec<String>) -> Result<(), Box<dyn std::error::Error>
     .unwrap()
     .progress_chars("━╸━");
 
-    let cookie_builder = CookieFinder::builder().with_browser(Browser::Firefox);
-    let cookie_finder = cookie_builder.build();
-    
-    let cookiejar = executor::block_on(cookie_finder.find());
-    let cookiejar_wrapper: CookieJarWrapper = CookieJarWrapper::new(cookiejar);
-
-    let cookie_store = std::sync::Arc::new(cookiejar_wrapper);
-
     let mut headers = header::HeaderMap::new();
     headers.insert(header::ACCEPT, header::HeaderValue::from_static("*/*"));
     headers.insert(header::USER_AGENT, header::HeaderValue::from_static("Mozilla/5.0 (X11; Linux x86_64; rv:138.0) Gecko/20100101 Firefox/138.0"));
@@ -83,22 +149,21 @@ fn download_file<'a>(urls: Vec<String>) -> Result<(), Box<dyn std::error::Error>
     let multiprog = Arc::new(MultiProgress::new());
     let mut handles: Vec<JoinHandle<_>> = vec![];
 
+    let cookiejar_wrapper: CookieJarWrapper = CookieJarWrapper::new();
+    let cookie_store = std::sync::Arc::new(cookiejar_wrapper);
+
     for url in urls {
         // Parse our URL out so we can get a destination filename
         let parsed_url  = Url::parse(&url)?;
         let path_segments = parsed_url.path_segments().ok_or_else(|| "cannot be base")?;
         let url_filename = path_segments.last().ok_or_else(|| "I don't even know what's going on")?;
 
-        let my_jar = std::sync::Arc::clone(&cookie_store);
-
         let client = reqwest::blocking::Client::builder()
             .cookie_provider(std::sync::Arc::clone(&cookie_store))
-            .cookie_store(true)
             .build()
             .unwrap();
 
-        let mut headers = headers.clone();
-        headers.append(reqwest::header::COOKIE, my_jar.cookies(&parsed_url).unwrap());
+        let headers = headers.clone();
 
         // Make our HTTP request and get our response (headers)
         let request = client

@@ -9,13 +9,15 @@ edition = "2024"
 # doc = false
 
 [dependencies]
-browser-cookie = { path="/home/dan/source/other/browser-cookie-rs" }
 clap = { version = "4.5.39", features = ["derive"] }
 content_disposition = { version = "0.4.0" }
 cookie = { version = "0.18.1", features = ["private", "secure"] }
 cookie_store = { version = "0.21.1" }
+dirs = "6.0.0"
 futures = "0.3.31"
 indicatif = { version = "0.17.11"}
 regex = "1.11.1"
 reqwest = { version = "0.12.18", default-features = false, features = ["blocking", "cookies", "rustls-tls", "charset", "http2", "brotli", "gzip", "deflate", "zstd"] }
+rookie = "0.5.6"
+tldextract = { version = "0.6.0", features = ["reqwest"] }
 url = { version = "2.5.4"}
