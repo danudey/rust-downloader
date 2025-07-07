@@ -19,5 +19,5 @@ indicatif = { version = "0.17.11"}
 regex = "1.11.1"
 reqwest = { version = "0.12.18", default-features = false, features = ["blocking", "cookies", "rustls-tls", "charset", "http2", "brotli", "gzip", "deflate", "zstd"] }
 rookie = "0.5.6"
-tldextract = { version = "0.6.0", features = ["reqwest"] }
+tldextract = { version = "0.6.0"}
 url = { version = "2.5.4"}

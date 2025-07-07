@@ -247,6 +247,68 @@ fn download_file<'a>(urls: Vec<String>) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use url::Url;
+    use rookie::common::enums::Cookie;
+
+    fn make_cookie(domain: &str, path: &str) -> Cookie {
+        Cookie {
+            domain: domain.to_string(),
+            path: path.to_string(),
+            name: "test".to_string(),
+            value: "dummy".to_string(),
+            http_only: false,
+            secure: false,
+            same_site: 0,
+            expires: None,
+        }
+    }
+
+    #[test]
+    fn test_cookie_matches_url_exact_domain_and_path() {
+        let cookie = make_cookie("example.com", "/foo");
+        let url = Url::parse("https://example.com/foo/bar").unwrap();
+        assert!(cookie_matches_url(&cookie, &url));
+    }
+
+    #[test]
+    fn test_cookie_matches_url_subdomain_with_dot() {
+        let cookie = make_cookie(".example.com", "/");
+        let url = Url::parse("https://sub.example.com/").unwrap();
+        assert!(cookie_matches_url(&cookie, &url));
+    }
+
+    #[test]
+    fn test_cookie_does_not_match_wrong_path() {
+        let cookie = make_cookie("example.com", "/foo");
+        let url = Url::parse("https://example.com/bar").unwrap();
+        assert!(!cookie_matches_url(&cookie, &url));
+    }
+
+    #[test]
+    fn test_cookie_does_not_match_wrong_domain() {
+        let cookie = make_cookie("example.com", "/");
+        let url = Url::parse("https://other.com/").unwrap();
+        assert!(!cookie_matches_url(&cookie, &url));
+    }
+
+    #[test]
+    fn test_cookie_matches_url_subdomain_with_dot_and_path() {
+        let cookie = make_cookie(".example.com", "/foo");
+        let url = Url::parse("https://sub.example.com/foo/bar").unwrap();
+        assert!(cookie_matches_url(&cookie, &url));
+    }
+
+    #[test]
+    fn test_cookie_does_not_match_subdomain_without_dot() {
+        let cookie = make_cookie("example.com", "/");
+        let url = Url::parse("https://sub.fexample.com/").unwrap();
+        assert!(!cookie_matches_url(&cookie, &url));
+    }
+}
+
 fn main() {
     let args= Cli::parse();
 
