@@ -125,10 +125,6 @@ impl reqwest::cookie::CookieStore for CookieJarWrapper {
             return None;
         }
 
-        // matching_cookies.iter().clone().for_each(|cookie| {
-        //     debug!("Using cookie: {}={}", cookie.name, cookie.value)
-        // });
-
         let cookie_header = matching_cookies.to_string();
         debug!("Sending {} matching cookies for URL: {} (cookie names: {:?})", 
                matching_cookies.len(), 
