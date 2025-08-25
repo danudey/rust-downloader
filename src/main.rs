@@ -151,9 +151,13 @@ fn download_file<'a>(urls: Vec<String>, browser_type: Option<BrowserType>) -> Re
             .headers(headers.clone())
             .build()
             .unwrap();
-        let response = client.execute(request).unwrap();
-
-        // let response = reqwest::blocking::Client::builder().build()?.get(url).send();
+        let response = match client.execute(request) {
+            Ok(response) => response,
+            Err(e) => {
+                error!("Failed to query URL: {}", e.with_url(parsed_url));
+                continue;
+            },
+        };
 
         // Instantiate our progress bar
         let pb: ProgressBar = multiprog.add(ProgressBar::new(0).with_style(style.clone()));

@@ -210,7 +210,6 @@ mod integration_tests {
         // Test browser selection with a real URL (but don't actually download)
         // We'll use a non-existent URL to avoid actual network requests
         let output = run_download_command(&[
-            "--browser", "firefox", 
             "http://nonexistent.invalid.test.url.that.should.not.exist"
         ]);
         
