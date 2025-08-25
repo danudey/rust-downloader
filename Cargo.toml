@@ -3,10 +3,13 @@ name = "download"
 version = "0.2.2"
 edition = "2024"
 
-# [[bin]]
-# name = "test"
-# path = "src/test.rs"
-# doc = false
+[profile.release-size]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
 
 [dependencies]
 clap = { version = "4.5.39", features = ["derive"] }
