@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.4](https://github.com/danudey/rust-downloader/compare/v0.2.3...v0.2.4) (2025-11-14)
+
+
+### Bug Fixes
+
+* Remove excessive output and unused errors ([#8](https://github.com/danudey/rust-downloader/issues/8)) ([9817035](https://github.com/danudey/rust-downloader/commit/981703534b743b73a349192b4686eb25a56a2145))
+* Require at least one URL ([#7](https://github.com/danudey/rust-downloader/issues/7)) ([9652bb5](https://github.com/danudey/rust-downloader/commit/9652bb5059b8bbc9c9491922300dd561af4e1a00))
+
 ## [0.2.3](https://github.com/danudey/rust-downloader/compare/v0.2.2...v0.2.3) (2025-08-25)
 
 
