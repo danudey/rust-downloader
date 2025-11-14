@@ -86,9 +86,6 @@ pub enum BrowserError {
 
     #[error("Failed to fetch cookies from {browser}: {message}")]
     CookieFetchError { browser: String, message: String },
-
-    #[error("Invalid browser configuration: {0}")]
-    InvalidConfiguration(String),
 }
 
 impl BrowserError {
@@ -114,9 +111,6 @@ impl BrowserError {
             }
             BrowserError::CookieFetchError { browser, message } => {
                 Self::format_cookie_fetch_error_message(browser, message)
-            }
-            BrowserError::InvalidConfiguration(config) => {
-                Self::format_invalid_configuration_message(config)
             }
         }
     }
@@ -172,23 +166,7 @@ impl BrowserError {
 
     /// Format user-friendly message for no browsers available errors
     fn format_no_browsers_available_message() -> String {
-        let all_browsers = BrowserType::all()
-            .iter()
-            .map(|b| b.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        format!(
-            "⛔ No supported browsers found on your system.\n\n\
-            📋 Supported browsers: {}\n\n\
-            🔧 Installation help:\n\
-            • Chrome: https://www.google.com/chrome/\n\
-            • Firefox: https://www.mozilla.org/firefox/\n\
-            • Safari: Pre-installed on macOS\n\
-            • Edge: https://www.microsoft.com/edge/\n\n\
-            💡 Tip: After installing a browser, run it at least once to create cookie storage.",
-            all_browsers
-        )
+        String::from("No supported browsers found on your system.")
     }
 
     /// Format user-friendly message for cookie fetch errors
@@ -230,25 +208,6 @@ impl BrowserError {
         )
     }
 
-    /// Format user-friendly message for invalid configuration errors
-    fn format_invalid_configuration_message(config: &str) -> String {
-        let available_browsers = BrowserType::all()
-            .iter()
-            .map(|b| b.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        format!(
-            "⛔ Invalid browser configuration: {}\n\n\
-            📋 Valid options: {}\n\n\
-            💡 Tips:\n\
-            • Use --browser <name> to specify a browser\n\
-            • Browser names are case-insensitive\n\
-            • Example: --browser chrome",
-            config, available_browsers
-        )
-    }
-
     /// Get a brief error message without formatting (for logging)
     pub fn brief_message(&self) -> String {
         match self {
@@ -264,54 +223,9 @@ impl BrowserError {
             BrowserError::CookieFetchError { browser, message } => {
                 format!("Cookie fetch failed for {}: {}", browser, message)
             }
-            BrowserError::InvalidConfiguration(config) => {
-                format!("Invalid configuration: {}", config)
-            }
         }
     }
 
-    /// Get suggestions for resolving the error
-    pub fn get_suggestions(&self) -> Vec<String> {
-        match self {
-            BrowserError::UnsupportedBrowser(_) => {
-                let available = BrowserType::all()
-                    .iter()
-                    .map(|b| format!("--browser {}", b.as_str()))
-                    .collect();
-                available
-            }
-            BrowserError::BrowserNotAvailable(browser) => {
-                let mut suggestions = vec![format!("Install {} browser", browser)];
-                let available = CookieManager::detect_available_browsers();
-                if !available.is_empty() {
-                    suggestions.push(format!("Use --browser {}", available[0].as_str()));
-                }
-                suggestions
-            }
-            BrowserError::NoBrowsersAvailable => {
-                vec![
-                    "Install Chrome, Firefox, Safari, or Edge".to_string(),
-                    "Run the browser at least once after installation".to_string(),
-                ]
-            }
-            BrowserError::CookieFetchError { browser, .. } => {
-                let mut suggestions = vec![format!("Close {} and try again", browser)];
-                let available = CookieManager::detect_available_browsers()
-                    .iter()
-                    .filter(|b| b.as_str() != browser)
-                    .map(|b| format!("Try --browser {}", b.as_str()))
-                    .collect::<Vec<_>>();
-                suggestions.extend(available);
-                suggestions
-            }
-            BrowserError::InvalidConfiguration(_) => {
-                BrowserType::all()
-                    .iter()
-                    .map(|b| format!("Use --browser {}", b.as_str()))
-                    .collect()
-            }
-        }
-    }
 }
 
 /// Firefox browser strategy implementation
@@ -938,17 +852,6 @@ mod tests {
     }
 
     #[test]
-    fn test_format_invalid_configuration_message() {
-        let message = BrowserError::format_invalid_configuration_message("bad config");
-        assert!(message.contains("⛔ Invalid browser configuration: bad config"));
-        assert!(message.contains("📋 Valid options: chrome, firefox, safari, edge"));
-        assert!(message.contains("💡 Tips:"));
-        assert!(message.contains("Use --browser <name>"));
-        assert!(message.contains("Browser names are case-insensitive"));
-        assert!(message.contains("Example: --browser chrome"));
-    }
-
-    #[test]
     fn test_brief_message() {
         let unsupported = BrowserError::UnsupportedBrowser("invalid".to_string());
         assert_eq!(unsupported.brief_message(), "Unsupported browser: invalid");
@@ -961,58 +864,6 @@ mod tests {
 
         let fetch_error = BrowserError::cookie_fetch_error("firefox", "Database error");
         assert_eq!(fetch_error.brief_message(), "Cookie fetch failed for firefox: Database error");
-
-        let config_error = BrowserError::InvalidConfiguration("bad config".to_string());
-        assert_eq!(config_error.brief_message(), "Invalid configuration: bad config");
-    }
-
-    #[test]
-    fn test_get_suggestions_unsupported_browser() {
-        let error = BrowserError::UnsupportedBrowser("invalid".to_string());
-        let suggestions = error.get_suggestions();
-        assert_eq!(suggestions.len(), 4);
-        assert!(suggestions.contains(&"--browser chrome".to_string()));
-        assert!(suggestions.contains(&"--browser firefox".to_string()));
-        assert!(suggestions.contains(&"--browser safari".to_string()));
-        assert!(suggestions.contains(&"--browser edge".to_string()));
-    }
-
-    #[test]
-    fn test_get_suggestions_browser_not_available() {
-        let error = BrowserError::BrowserNotAvailable("chrome".to_string());
-        let suggestions = error.get_suggestions();
-        assert!(suggestions.len() >= 1);
-        assert!(suggestions.contains(&"Install chrome browser".to_string()));
-        // May contain additional suggestions based on available browsers
-    }
-
-    #[test]
-    fn test_get_suggestions_no_browsers_available() {
-        let error = BrowserError::NoBrowsersAvailable;
-        let suggestions = error.get_suggestions();
-        assert_eq!(suggestions.len(), 2);
-        assert!(suggestions.contains(&"Install Chrome, Firefox, Safari, or Edge".to_string()));
-        assert!(suggestions.contains(&"Run the browser at least once after installation".to_string()));
-    }
-
-    #[test]
-    fn test_get_suggestions_cookie_fetch_error() {
-        let error = BrowserError::cookie_fetch_error("chrome", "Database locked");
-        let suggestions = error.get_suggestions();
-        assert!(suggestions.len() >= 1);
-        assert!(suggestions.contains(&"Close chrome and try again".to_string()));
-        // May contain additional browser suggestions
-    }
-
-    #[test]
-    fn test_get_suggestions_invalid_configuration() {
-        let error = BrowserError::InvalidConfiguration("bad config".to_string());
-        let suggestions = error.get_suggestions();
-        assert_eq!(suggestions.len(), 4);
-        assert!(suggestions.contains(&"Use --browser chrome".to_string()));
-        assert!(suggestions.contains(&"Use --browser firefox".to_string()));
-        assert!(suggestions.contains(&"Use --browser safari".to_string()));
-        assert!(suggestions.contains(&"Use --browser edge".to_string()));
     }
 
     // Tests for logging behavior

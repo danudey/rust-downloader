@@ -71,7 +71,6 @@ fn download_file<'a>(urls: Vec<String>, browser_type: Option<BrowserType>) -> Re
                         Err(fallback_err) => {
                             warn!("Fallback auto-detection failed: {}", fallback_err.brief_message());
                             eprintln!("Warning: {}", fallback_err.user_friendly_message());
-                            eprintln!("Continuing without cookies...");
                             None
                         }
                     }
@@ -90,8 +89,6 @@ fn download_file<'a>(urls: Vec<String>, browser_type: Option<BrowserType>) -> Re
                 }
                 Err(e) => {
                     warn!("Fallback CookieManager creation failed: {}", e.brief_message());
-                    eprintln!("Warning: {}", e.user_friendly_message());
-                    eprintln!("Continuing without cookies...");
                     None
                 }
             }
