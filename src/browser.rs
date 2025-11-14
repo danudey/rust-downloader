@@ -65,7 +65,7 @@ impl FromStr for BrowserType {
             "firefox" => Ok(BrowserType::Firefox),
             "safari" => Ok(BrowserType::Safari),
             "edge" => Ok(BrowserType::Edge),
-            _ => Err(BrowserError::UnsupportedBrowser(s.to_string())),
+            _ => Err(BrowserError::UnsupportedBrowser { browser: s.to_string()}),
         }
     }
 }
@@ -73,12 +73,13 @@ impl FromStr for BrowserType {
 /// Comprehensive error types for browser operations
 #[derive(Debug, thiserror::Error)]
 pub enum BrowserError {
-    #[error("Browser '{0}' is not supported. Available browsers: {}", 
-            BrowserType::all().iter().map(|b| b.as_str()).collect::<Vec<_>>().join(", "))]
-    UnsupportedBrowser(String),
+    #[error("Browser '{browser}' is not supported. Available browsers: {}", 
+            BrowserType::all().iter().map(|b| b.as_str()).collect::<Vec<_>>().join(", ")
+        )]
+    UnsupportedBrowser { browser: String },
 
-    #[error("Browser '{0}' is not available or installed")]
-    BrowserNotAvailable(String),
+    #[error("Browser '{browser}' is not available or installed")]
+    BrowserNotAvailable { browser: String },
 
     #[error("No supported browsers found. Please install one of: {}", 
             BrowserType::all().iter().map(|b| b.as_str()).collect::<Vec<_>>().join(", "))]
@@ -100,10 +101,10 @@ impl BrowserError {
     /// Get user-friendly error message with suggestions
     pub fn user_friendly_message(&self) -> String {
         match self {
-            BrowserError::UnsupportedBrowser(browser) => {
+            BrowserError::UnsupportedBrowser { browser } => {
                 Self::format_unsupported_browser_message(browser)
             }
-            BrowserError::BrowserNotAvailable(browser) => {
+            BrowserError::BrowserNotAvailable { browser } => {
                 Self::format_browser_not_available_message(browser)
             }
             BrowserError::NoBrowsersAvailable => {
@@ -211,10 +212,10 @@ impl BrowserError {
     /// Get a brief error message without formatting (for logging)
     pub fn brief_message(&self) -> String {
         match self {
-            BrowserError::UnsupportedBrowser(browser) => {
+            BrowserError::UnsupportedBrowser { browser } => {
                 format!("Unsupported browser: {}", browser)
             }
-            BrowserError::BrowserNotAvailable(browser) => {
+            BrowserError::BrowserNotAvailable { browser } => {
                 format!("Browser not available: {}", browser)
             }
             BrowserError::NoBrowsersAvailable => {
@@ -423,9 +424,9 @@ impl BrowserStrategy for SafariStrategy {
         #[cfg(not(target_os = "macos"))]
         {
             warn!("Safari cookie fetch attempted on non-macOS platform for domains: {:?}", domains);
-            Err(BrowserError::BrowserNotAvailable(
-                "Safari is only available on macOS".to_string(),
-            ))
+            Err(BrowserError::BrowserNotAvailable {
+                browser: "Safari is only available on macOS".to_string()
+            })
         }
     }
 
@@ -535,9 +536,9 @@ impl CookieManager {
         // Check if the selected browser is available
         if !strategy.is_available() {
             warn!("Selected browser {} is not available", browser_type);
-            return Err(BrowserError::BrowserNotAvailable(
-                browser_type.as_str().to_string(),
-            ));
+            return Err(BrowserError::BrowserNotAvailable {
+                browser: browser_type.as_str().to_string()},
+            );
         }
 
         info!("Successfully created CookieManager with {} browser", browser_type);
@@ -609,7 +610,7 @@ impl CookieManager {
                     info!("Successfully created CookieManager with preferred browser: {}", browser_type);
                     return Ok(manager);
                 }
-                Err(BrowserError::BrowserNotAvailable(_)) => {
+                Err(BrowserError::BrowserNotAvailable { browser: _ }) => {
                     warn!("Preferred browser {} not available, falling back to auto-detection", browser_type);
                     // Fall back to auto-detection if preferred browser is not available
                 }
@@ -695,7 +696,7 @@ mod tests {
         let result = "invalid".parse::<BrowserType>();
         assert!(result.is_err());
         match result.unwrap_err() {
-            BrowserError::UnsupportedBrowser(browser) => {
+            BrowserError::UnsupportedBrowser { browser } => {
                 assert_eq!(browser, "invalid");
             }
             _ => panic!("Expected UnsupportedBrowser error"),
@@ -730,7 +731,7 @@ mod tests {
 
     #[test]
     fn test_browser_error_unsupported_browser_message() {
-        let error = BrowserError::UnsupportedBrowser("invalid".to_string());
+        let error = BrowserError::UnsupportedBrowser { browser: "invalid".to_string() };
         let message = error.to_string();
         assert!(message.contains("invalid"));
         assert!(message.contains("chrome"));
@@ -846,10 +847,10 @@ mod tests {
 
     #[test]
     fn test_brief_message() {
-        let unsupported = BrowserError::UnsupportedBrowser("invalid".to_string());
+        let unsupported = BrowserError::UnsupportedBrowser { browser: "invalid".to_string()};
         assert_eq!(unsupported.brief_message(), "Unsupported browser: invalid");
 
-        let not_available = BrowserError::BrowserNotAvailable("chrome".to_string());
+        let not_available = BrowserError::BrowserNotAvailable { browser: "chrome".to_string() };
         assert_eq!(not_available.brief_message(), "Browser not available: chrome");
 
         let no_browsers = BrowserError::NoBrowsersAvailable;
@@ -1102,7 +1103,7 @@ mod tests {
             let result = strategy.fetch_cookies(vec!["example.com".to_string()]);
             assert!(result.is_err());
             match result.unwrap_err() {
-                BrowserError::BrowserNotAvailable(msg) => {
+                BrowserError::BrowserNotAvailable { browser: msg} => {
                     assert!(msg.contains("Safari is only available on macOS"));
                 }
                 _ => panic!("Expected BrowserNotAvailable error"),
@@ -1159,7 +1160,7 @@ mod tests {
                 Ok(manager) => {
                     assert_eq!(manager.browser_name(), browser_type.as_str());
                 }
-                Err(BrowserError::BrowserNotAvailable(browser)) => {
+                Err(BrowserError::BrowserNotAvailable { browser }) => {
                     assert_eq!(browser, browser_type.as_str());
                 }
                 Err(e) => panic!("Unexpected error: {:?}", e),

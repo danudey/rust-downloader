@@ -341,7 +341,7 @@ mod tests {
         let result = validate_browser_argument(Some("invalid".to_string()));
         assert!(result.is_err());
         match result.unwrap_err() {
-            BrowserError::UnsupportedBrowser(browser) => {
+            BrowserError::UnsupportedBrowser { browser } => {
                 assert_eq!(browser, "invalid");
             }
             _ => panic!("Expected UnsupportedBrowser error"),
@@ -353,7 +353,7 @@ mod tests {
         let result = validate_browser_argument(Some("".to_string()));
         assert!(result.is_err());
         match result.unwrap_err() {
-            BrowserError::UnsupportedBrowser(browser) => {
+            BrowserError::UnsupportedBrowser { browser } => {
                 assert_eq!(browser, "");
             }
             _ => panic!("Expected UnsupportedBrowser error"),
@@ -411,7 +411,7 @@ mod tests {
             assert!(result.is_err(), "Invalid browser '{}' should fail validation", invalid_browser);
             
             match result.unwrap_err() {
-                BrowserError::UnsupportedBrowser(browser) => {
+                BrowserError::UnsupportedBrowser { browser } => {
                     assert_eq!(browser, *invalid_browser);
                 }
                 _ => panic!("Expected UnsupportedBrowser error for '{}'", invalid_browser),

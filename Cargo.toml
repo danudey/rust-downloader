@@ -12,18 +12,18 @@ panic = "abort"
 strip = true
 
 [dependencies]
-clap = { version = "4.5.39", features = ["derive"] }
+clap = { version = "4.5.51", features = ["derive"] }
 content_disposition = { version = "0.4.0" }
 cookie = { version = "0.18.1", features = ["private", "secure"] }
-cookie_store = { version = "0.21.1" }
+cookie_store = { version = "0.22.0" }
 dirs = "6.0.0"
 env_logger = "0.11.0"
 futures = "0.3.31"
-indicatif = { version = "0.17.11"}
-log = "0.4.22"
-regex = "1.11.1"
+indicatif = { version = "0.18.3"}
+log = "0.4.28"
+regex = "1.12.2"
 reqwest = { version = "0.12.18", default-features = false, features = ["blocking", "cookies", "rustls-tls", "charset", "http2", "brotli", "gzip", "deflate", "zstd"] }
 rookie = "0.5.6"
-thiserror = "1.0"
+thiserror = "2.0.17"
 tldextract = { version = "0.6.0"}
-url = { version = "2.5.4"}
+url = { version = "2.5.7"}
