@@ -36,6 +36,7 @@ fn validate_browser_argument(browser_arg: Option<String>) -> Result<Option<Brows
 #[derive(Parser, Debug)]
 struct Cli {
     /// The URL to download from
+    #[arg(required = true)]
     urls: Vec<String>,
     
     /// Browser to use for cookies (chrome, firefox, safari, edge)
@@ -625,3 +626,4 @@ mod tests {
         assert!(non_matching_result.is_none(), "Should not return cookies for non-matching domain");
     }
 }
+
