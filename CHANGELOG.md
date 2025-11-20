@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/danudey/rust-downloader/compare/v0.2.4...v0.3.0) (2025-11-20)
+
+
+### Features
+
+* Add chromium support ([#12](https://github.com/danudey/rust-downloader/issues/12)) ([dc95532](https://github.com/danudey/rust-downloader/commit/dc955327fc5a637e061989ae3ba1ea9133377a48))
+
+
+### Bug Fixes
+
+* update crate deps ([#10](https://github.com/danudey/rust-downloader/issues/10)) ([f82379b](https://github.com/danudey/rust-downloader/commit/f82379b880fab665ca72abdec765e6622569d81f))
+
 ## [0.2.4](https://github.com/danudey/rust-downloader/compare/v0.2.3...v0.2.4) (2025-11-14)
 
 
