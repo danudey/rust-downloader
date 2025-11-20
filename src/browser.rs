@@ -1,5 +1,5 @@
 use rookie::common::enums::Cookie;
-use rookie::{chrome, edge, firefox};
+use rookie::{chrome, chromium, edge, firefox};
 use std::fmt;
 use std::str::FromStr;
 use log::{debug, info, warn, error};
@@ -23,6 +23,7 @@ pub trait BrowserStrategy: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrowserType {
     Chrome,
+    Chromium,
     Firefox,
     Safari,
     Edge,
@@ -33,6 +34,7 @@ impl BrowserType {
     pub fn all() -> Vec<BrowserType> {
         vec![
             BrowserType::Chrome,
+            BrowserType::Chromium,
             BrowserType::Firefox,
             BrowserType::Safari,
             BrowserType::Edge,
@@ -43,6 +45,7 @@ impl BrowserType {
     pub fn as_str(&self) -> &'static str {
         match self {
             BrowserType::Chrome => "chrome",
+            BrowserType::Chromium => "chromium",
             BrowserType::Firefox => "firefox",
             BrowserType::Safari => "safari",
             BrowserType::Edge => "edge",
@@ -62,6 +65,7 @@ impl FromStr for BrowserType {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "chrome" => Ok(BrowserType::Chrome),
+            "chromium" => Ok(BrowserType::Chromium),
             "firefox" => Ok(BrowserType::Firefox),
             "safari" => Ok(BrowserType::Safari),
             "edge" => Ok(BrowserType::Edge),
@@ -134,14 +138,6 @@ impl BrowserError {
 
     /// Format user-friendly message for browser not available errors
     fn format_browser_not_available_message(browser: &str) -> String {
-        let installation_tips = match browser {
-            "chrome" => "• Download from https://www.google.com/chrome/\n   • Make sure to run Chrome at least once after installation",
-            "firefox" => "• Download from https://www.mozilla.org/firefox/\n   • Make sure to run Firefox at least once after installation",
-            "safari" => "• Safari is pre-installed on macOS\n   • Make sure to run Safari at least once\n   • Note: Safari is only available on macOS",
-            "edge" => "• Download from https://www.microsoft.com/edge/\n   • Make sure to run Edge at least once after installation",
-            _ => "• Make sure the browser is installed and has been run at least once",
-        };
-
         let available_browsers = CookieManager::detect_available_browsers()
             .iter()
             .map(|b| b.as_str())
@@ -159,9 +155,8 @@ impl BrowserError {
         };
 
         format!(
-            "⛔ Browser '{}' is not available or installed.\n\n\
-            🔧 Installation help:\n   {}\n{}",
-            browser, installation_tips, fallback_suggestion
+            "⛔ Browser '{}' is not available or installed.\n\n{}",
+            browser, fallback_suggestion
         )
     }
 
@@ -373,6 +368,81 @@ impl BrowserStrategy for ChromeStrategy {
     }
 }
 
+pub struct ChromiumStrategy;
+
+impl ChromiumStrategy {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Check if Chrome cookie database exists
+    fn chrome_cookies_exist() -> bool {
+        // Chrome cookies are typically stored in:
+        // Linux: ~/.config/google-chrome/Default/Cookies
+        // macOS: ~/Library/Application Support/Google/Chrome/Default/Cookies
+        // Windows: %LOCALAPPDATA%\Google\Chrome\User Data\Default\Cookies
+
+        if let Some(home_dir) = dirs::home_dir() {
+            let chrome_paths = [
+                home_dir
+                    .join(".config")
+                    .join("chromium")
+                    .join("Default")
+                    .join("Cookies"),
+                home_dir
+                    .join("Library")
+                    .join("Application Support")
+                    .join("Google")
+                    .join("Chromium")
+                    .join("Default")
+                    .join("Cookies"),
+                home_dir
+                    .join("AppData")
+                    .join("Local")
+                    .join("Google")
+                    .join("Chromium")
+                    .join("User Data")
+                    .join("Default")
+                    .join("Cookies"),
+            ];
+
+            chrome_paths
+                .iter()
+                .any(|path| path.exists() && path.is_file())
+        } else {
+            false
+        }
+    }
+}
+
+impl BrowserStrategy for ChromiumStrategy {
+    fn fetch_cookies(&self, domains: Vec<String>) -> Result<Vec<Cookie>, BrowserError> {
+        debug!("Attempting to fetch cookies from Chromium for domains: {:?}", domains);
+        match chromium(Some(domains.clone())) {
+            Ok(cookies) => {
+                info!("Successfully fetched {} cookies from Chromium for domains: {:?}", 
+                      cookies.len(), domains);
+                debug!("Chromium cookies: {:?}", cookies.iter().map(|c| format!("{}={}", c.name, "[REDACTED]")).collect::<Vec<_>>());
+                Ok(cookies)
+            }
+            Err(e) => {
+                error!("Failed to fetch cookies from Chromium for domains {:?}: {}", domains, e);
+                Err(BrowserError::cookie_fetch_error("chromium", e))
+            }
+        }
+    }
+
+    fn is_available(&self) -> bool {
+        let available = Self::chrome_cookies_exist();
+        debug!("Chromium availability check: {}", available);
+        available
+    }
+
+    fn browser_name(&self) -> &'static str {
+        "chromium"
+    }
+}
+
 /// Safari browser strategy implementation
 pub struct SafariStrategy;
 
@@ -528,6 +598,7 @@ impl CookieManager {
         
         let strategy: Box<dyn BrowserStrategy> = match browser_type {
             BrowserType::Chrome => Box::new(ChromeStrategy::new()),
+            BrowserType::Chromium => Box::new(ChromiumStrategy::new()),
             BrowserType::Firefox => Box::new(FirefoxStrategy::new()),
             BrowserType::Safari => Box::new(SafariStrategy::new()),
             BrowserType::Edge => Box::new(EdgeStrategy::new()),
@@ -569,6 +640,7 @@ impl CookieManager {
         debug!("Starting browser detection process");
         let browser_priority = [
             BrowserType::Chrome,
+            BrowserType::Chromium,
             BrowserType::Firefox,
             BrowserType::Safari,
             BrowserType::Edge,
@@ -580,6 +652,7 @@ impl CookieManager {
             debug!("Checking availability of {}", browser_type);
             let strategy: Box<dyn BrowserStrategy> = match browser_type {
                 BrowserType::Chrome => Box::new(ChromeStrategy::new()),
+                BrowserType::Chromium => Box::new(ChromiumStrategy::new()),
                 BrowserType::Firefox => Box::new(FirefoxStrategy::new()),
                 BrowserType::Safari => Box::new(SafariStrategy::new()),
                 BrowserType::Edge => Box::new(EdgeStrategy::new()),
@@ -664,6 +737,10 @@ mod tests {
             BrowserType::Chrome
         );
         assert_eq!(
+            "chromium".parse::<BrowserType>().unwrap(),
+            BrowserType::Chromium
+        );
+        assert_eq!(
             "firefox".parse::<BrowserType>().unwrap(),
             BrowserType::Firefox
         );
@@ -706,6 +783,7 @@ mod tests {
     #[test]
     fn test_browser_type_display() {
         assert_eq!(BrowserType::Chrome.to_string(), "chrome");
+        assert_eq!(BrowserType::Chromium.to_string(), "chromium");
         assert_eq!(BrowserType::Firefox.to_string(), "firefox");
         assert_eq!(BrowserType::Safari.to_string(), "safari");
         assert_eq!(BrowserType::Edge.to_string(), "edge");
@@ -714,6 +792,7 @@ mod tests {
     #[test]
     fn test_browser_type_as_str() {
         assert_eq!(BrowserType::Chrome.as_str(), "chrome");
+        assert_eq!(BrowserType::Chromium.as_str(), "chromium");
         assert_eq!(BrowserType::Firefox.as_str(), "firefox");
         assert_eq!(BrowserType::Safari.as_str(), "safari");
         assert_eq!(BrowserType::Edge.as_str(), "edge");
@@ -722,8 +801,9 @@ mod tests {
     #[test]
     fn test_browser_type_all() {
         let all_browsers = BrowserType::all();
-        assert_eq!(all_browsers.len(), 4);
+        assert_eq!(all_browsers.len(), 5);
         assert!(all_browsers.contains(&BrowserType::Chrome));
+        assert!(all_browsers.contains(&BrowserType::Chromium));
         assert!(all_browsers.contains(&BrowserType::Firefox));
         assert!(all_browsers.contains(&BrowserType::Safari));
         assert!(all_browsers.contains(&BrowserType::Edge));
@@ -735,6 +815,7 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("invalid"));
         assert!(message.contains("chrome"));
+        assert!(message.contains("chromium"));
         assert!(message.contains("firefox"));
         assert!(message.contains("safari"));
         assert!(message.contains("edge"));
@@ -746,6 +827,7 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("No supported browsers found"));
         assert!(message.contains("chrome"));
+        assert!(message.contains("chromium"));
         assert!(message.contains("firefox"));
         assert!(message.contains("safari"));
         assert!(message.contains("edge"));
@@ -766,40 +848,37 @@ mod tests {
     #[test]
     fn test_format_unsupported_browser_message() {
         let message = BrowserError::format_unsupported_browser_message("invalid");
-        assert!(message.contains("Available browsers: chrome, firefox, safari, edge"));
+        assert!(message.contains("Available browsers: chrome, chromium, firefox, safari, edge"));
     }
 
     #[test]
     fn test_format_browser_not_available_message_chrome() {
         let message = BrowserError::format_browser_not_available_message("chrome");
         assert!(message.contains("⛔ Browser 'chrome' is not available"));
-        assert!(message.contains("🔧 Installation help:"));
-        assert!(message.contains("https://www.google.com/chrome/"));
-        assert!(message.contains("Make sure to run Chrome at least once"));
+    }
+
+    #[test]
+    fn test_format_browser_not_available_message_chromium() {
+        let message = BrowserError::format_browser_not_available_message("chromium");
+        assert!(message.contains("⛔ Browser 'chromium' is not available"));
     }
 
     #[test]
     fn test_format_browser_not_available_message_firefox() {
         let message = BrowserError::format_browser_not_available_message("firefox");
         assert!(message.contains("⛔ Browser 'firefox' is not available"));
-        assert!(message.contains("https://www.mozilla.org/firefox/"));
-        assert!(message.contains("Make sure to run Firefox at least once"));
     }
 
     #[test]
     fn test_format_browser_not_available_message_safari() {
         let message = BrowserError::format_browser_not_available_message("safari");
         assert!(message.contains("⛔ Browser 'safari' is not available"));
-        assert!(message.contains("Safari is pre-installed on macOS"));
-        assert!(message.contains("Note: Safari is only available on macOS"));
     }
 
     #[test]
     fn test_format_browser_not_available_message_edge() {
         let message = BrowserError::format_browser_not_available_message("edge");
         assert!(message.contains("⛔ Browser 'edge' is not available"));
-        assert!(message.contains("https://www.microsoft.com/edge/"));
-        assert!(message.contains("Make sure to run Edge at least once"));
     }
 
     #[test]
@@ -1304,9 +1383,10 @@ mod tests {
         
         // Should be in priority order (Chrome, Firefox, Safari, Edge)
         let mut expected_order = Vec::new();
-        for browser_type in [BrowserType::Chrome, BrowserType::Firefox, BrowserType::Safari, BrowserType::Edge] {
+        for browser_type in [BrowserType::Chrome, BrowserType::Chromium, BrowserType::Firefox, BrowserType::Safari, BrowserType::Edge] {
             let strategy: Box<dyn BrowserStrategy> = match browser_type {
                 BrowserType::Chrome => Box::new(ChromeStrategy::new()),
+                BrowserType::Chromium => Box::new(ChromiumStrategy::new()),
                 BrowserType::Firefox => Box::new(FirefoxStrategy::new()),
                 BrowserType::Safari => Box::new(SafariStrategy::new()),
                 BrowserType::Edge => Box::new(EdgeStrategy::new()),
@@ -1326,6 +1406,7 @@ mod tests {
         for browser_type in BrowserType::all() {
             let strategy: Box<dyn BrowserStrategy> = match browser_type {
                 BrowserType::Chrome => Box::new(ChromeStrategy::new()),
+                BrowserType::Chromium => Box::new(ChromiumStrategy::new()),
                 BrowserType::Firefox => Box::new(FirefoxStrategy::new()),
                 BrowserType::Safari => Box::new(SafariStrategy::new()),
                 BrowserType::Edge => Box::new(EdgeStrategy::new()),

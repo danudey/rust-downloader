@@ -232,7 +232,7 @@ fn download_file<'a>(urls: Vec<String>, browser_type: Option<BrowserType>) -> Re
 fn main() {
     // Initialize logging
     env_logger::init();
-    
+        
     let args = Cli::parse();
     debug!("Application started with args: {:?}", args);
 
