@@ -97,9 +97,14 @@ fn download_file<'a>(urls: Vec<String>, browser_type: Option<BrowserType>) -> Re
     };
 
     // Set our progress bar components
-    let style = ProgressStyle::with_template("{prefix:.blue} {wide_bar:.blue/white} {percent}% • {bytes:.green}/{total_bytes:.green} • {binary_bytes_per_sec:.red} • {eta:.cyan}  ")
+    let style = ProgressStyle::with_template("{prefix:.blue} {wide_bar:.blue/white} {percent}% • {bytes:.green}/{total_bytes:.green} • {binary_bytes_per_sec:>11.red} • eta {eta:>5.cyan}  ")
     .unwrap()
     .progress_chars("━╸━");
+
+    let finish_style = ProgressStyle::with_template("{prefix:.blue} {wide_bar:.blue/white} {percent}% • {total_bytes:.green} • {binary_bytes_per_sec:>11.red} • elapsed {elapsed:>4.cyan}  ")
+    .unwrap()
+    .progress_chars("━╸━");
+
 
     let mut headers = header::HeaderMap::new();
     headers.insert(header::ACCEPT, header::HeaderValue::from_static("*/*"));
@@ -210,10 +215,12 @@ fn download_file<'a>(urls: Vec<String>, browser_type: Option<BrowserType>) -> Re
         // Now we create our output file...
         let mut dest = File::create(url_filename).map_err(|e| format!("Failed to create file: {}", e))?;
 
+        let finish = finish_style.clone();
         let handle = thread::spawn(move || {
             // ...and write the data to it as we get it
             let _ = copy(&mut pb.wrap_read(response), &mut dest).map_err(|e| format!("Failed to copy content: {}", e));
-            pb.finish_with_message("msg");
+            pb.set_style(finish);
+            pb.finish();
         });
         handles.push(handle);
     }
