@@ -196,7 +196,7 @@ fn download_file<'a>(urls: Vec<String>, browser_type: Option<BrowserType>) -> Re
 
         let disparsed = parse_content_disposition(disposition);
         let output_filename = if disparsed.disposition == DispositionType::Attachment {
-            disparsed.filename_full().unwrap()
+            disparsed.filename_full().unwrap_or(url_filename.to_string())
         } else {
             url_filename.to_string()
         };
