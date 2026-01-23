@@ -11,8 +11,14 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
+[features]
+default = ["compression"]
+
+http3 = ["reqwest/http3"]
+compression = ["reqwest/brotli", "reqwest/gzip", "reqwest/deflate", "reqwest/zstd"]
+
 [dependencies]
-clap = { version = "4.5.53", features = ["cargo", "color", "derive", "error-context", "help", "std", "suggestions", "usage"] }
+clap = { version = "4.5.54", features = ["cargo", "color", "derive", "error-context", "help", "std", "suggestions", "usage"] }
 config = "0.15.19"
 content_disposition = { version = "0.4.0" }
 cookie = { version = "0.18.1", features = ["private", "secure"] }
@@ -21,12 +27,12 @@ dirs = "6.0.0"
 env_logger = "0.11.0"
 futures = "0.3.31"
 indicatif = { version = "0.18.3"}
-log = "0.4.28"
+log = "0.4.29"
 regex = "1.12.2"
-reqwest = { version = "0.12.18", default-features = false, features = ["blocking", "cookies", "rustls-tls", "charset", "http2", "brotli", "gzip", "deflate", "zstd"] }
+reqwest = { version = "0.13.1", features = ["blocking", "cookies"] }
 rookie = "0.5.6"
 serde = { version = "1.0.228", features = ["serde_derive", "std", "derive"] }
-thiserror = "2.0.17"
+thiserror = "2.0.18"
 tldextract = { version = "0.6.0"}
-url = { version = "2.5.7"}
+url = { version = "2.5.8"}
 xdg = "3.0.0"
