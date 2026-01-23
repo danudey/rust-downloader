@@ -1,5 +1,5 @@
 [package]
-name = "download"
+name = "rustdl"
 version = "0.4.0"
 edition = "2024"
 
@@ -16,6 +16,10 @@ default = ["compression"]
 
 http3 = ["reqwest/http3"]
 compression = ["reqwest/brotli", "reqwest/gzip", "reqwest/deflate", "reqwest/zstd"]
+
+[[bin]]
+name = "download"
+path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.5.54", features = ["cargo", "color", "derive", "error-context", "help", "std", "suggestions", "usage"] }

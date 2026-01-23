@@ -969,30 +969,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "download"
-version = "0.4.0"
-dependencies = [
- "clap",
- "config",
- "content_disposition",
- "cookie",
- "cookie_store",
- "dirs",
- "env_logger",
- "futures",
- "indicatif",
- "log",
- "regex",
- "reqwest",
- "rookie",
- "serde",
- "thiserror 2.0.18",
- "tldextract",
- "url",
- "xdg",
-]
-
-[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2845,6 +2821,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
 dependencies = [
  "semver",
+]
+
+[[package]]
+name = "rustdl"
+version = "0.4.0"
+dependencies = [
+ "clap",
+ "config",
+ "content_disposition",
+ "cookie",
+ "cookie_store",
+ "dirs",
+ "env_logger",
+ "futures",
+ "indicatif",
+ "log",
+ "regex",
+ "reqwest",
+ "rookie",
+ "serde",
+ "thiserror 2.0.18",
+ "tldextract",
+ "url",
+ "xdg",
 ]
 
 [[package]]
