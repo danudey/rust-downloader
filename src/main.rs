@@ -4,6 +4,7 @@ use std::io::copy;
 use std::thread::{self, JoinHandle};
 
 use clap::Parser;
+use clap::crate_version;
 use log::{debug, info, warn, error};
 
 use reqwest::header::{self};
@@ -107,9 +108,10 @@ fn download_file<'a>(urls: Vec<String>, browser_type: Option<BrowserType>) -> Re
 
 
     let mut headers = header::HeaderMap::new();
+    let user_agent = format!("rust-downloader/{} (https://github.com/danudey/rust-downloader)", crate_version!()).into_bytes();
     headers.insert(header::ACCEPT, header::HeaderValue::from_static("*/*"));
-    headers.insert(header::USER_AGENT, header::HeaderValue::from_static("Mozilla/5.0 (X11; Linux x86_64; rv:138.0) Gecko/20100101 Firefox/138.0"));
-
+    headers.insert(header::USER_AGENT, header::HeaderValue::from_bytes(&user_agent).unwrap());
+    
     let errstyle = ProgressStyle::with_template("{prefix:.red} [error] {msg:} ").unwrap();
     let multiprog = Arc::new(MultiProgress::new());
     let mut handles: Vec<JoinHandle<_>> = vec![];
@@ -136,11 +138,13 @@ fn download_file<'a>(urls: Vec<String>, browser_type: Option<BrowserType>) -> Re
             Some(store) => {
                 reqwest::blocking::Client::builder()
                     .cookie_provider(std::sync::Arc::clone(store))
+                    .connection_verbose(true)
                     .build()
                     .unwrap()
             }
             None => {
                 reqwest::blocking::Client::builder()
+                .connection_verbose(true)
                     .build()
                     .unwrap()
             }
