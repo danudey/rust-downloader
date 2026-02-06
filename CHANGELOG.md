@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/danudey/rust-downloader/compare/v0.3.0...v0.3.1) (2026-02-06)
+
+
+### Bug Fixes
+
+* use URL filename when `content-disposition` header is `attachment` but no filename is specified ([#14](https://github.com/danudey/rust-downloader/issues/14)) ([640b945](https://github.com/danudey/rust-downloader/commit/640b945049e58dace706a076513a333bcd9fb163))
+
 ## [0.3.0](https://github.com/danudey/rust-downloader/compare/v0.2.4...v0.3.0) (2025-11-20)
 
 
