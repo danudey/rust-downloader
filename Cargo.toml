@@ -2,6 +2,12 @@
 name = "rustdl"
 version = "0.4.0"
 edition = "2024"
+description = "An uncomplicated 'download this URL' tool for the command-line."
+repository = "https://github.com/danudey/rust-downloader"
+readme = "README.md"
+license = "MIT"
+keywords = ["command-line", "file-download"]
+categories = [ "command-line-utilities"]
 
 [profile.release-size]
 inherits = "release"
