@@ -11,7 +11,6 @@ use reqwest::header::{self};
 
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
-use url;
 use url::Url;
 
 use content_disposition::{parse_content_disposition, DispositionType};
@@ -45,7 +44,7 @@ struct Cli {
     browser: Option<String>,
 }
 
-fn download_file<'a>(urls: Vec<String>, browser_type: Option<BrowserType>) -> Result<(), Box<dyn std::error::Error>> {
+fn download_file(urls: Vec<String>, browser_type: Option<BrowserType>) -> Result<(), Box<dyn std::error::Error>> {
     debug!("Starting download_file with {} URLs and browser type: {:?}", urls.len(), browser_type);
     let mut failed_download = false;
 
@@ -131,8 +130,8 @@ fn download_file<'a>(urls: Vec<String>, browser_type: Option<BrowserType>) -> Re
     for url in urls {
         // Parse our URL out so we can get a destination filename
         let parsed_url  = Url::parse(&url)?;
-        let path_segments = parsed_url.path_segments().ok_or_else(|| "cannot be base")?;
-        let url_filename = path_segments.last().ok_or_else(|| "I don't even know what's going on")?;
+        let mut path_segments = parsed_url.path_segments().ok_or("cannot be base")?;
+        let url_filename = path_segments.next_back().ok_or("I don't even know what's going on")?;
 
         let client = match &cookie_store {
             Some(store) => {
@@ -172,13 +171,13 @@ fn download_file<'a>(urls: Vec<String>, browser_type: Option<BrowserType>) -> Re
         // Bail out if some bad stuff happened
 
         if response.status().is_server_error() {
-            let errstr = format!("{}: server returned {} {}", parsed_url.as_str(), response.status().as_str(), response.status().canonical_reason().unwrap());
+            let errstr = format!("{}: got server error from {}: {}", parsed_url.as_str(), response.status().as_str(), response.status().canonical_reason().unwrap());
             pb.set_style(errstyle.clone());
             pb.finish_with_message(errstr);
             failed_download = true;
             continue;
-        } else if  response.status().is_client_error() {
-            let errstr = format!("{}: server returned {} {}", parsed_url.as_str(), response.status().as_str(), response.status().canonical_reason().unwrap());
+        } else if response.status().is_client_error() {
+            let errstr = format!("{}: server reported client error for {}: {}", parsed_url.as_str(), response.status().as_str(), response.status().canonical_reason().unwrap());
             pb.set_style(errstyle.clone());
             pb.finish_with_message(errstr);
             failed_download = true;
@@ -186,10 +185,7 @@ fn download_file<'a>(urls: Vec<String>, browser_type: Option<BrowserType>) -> Re
         }
 
         // Check the Content-Length header if we got one; otherwise, set it to zero
-        let content_length = match response.content_length() {
-            Some(length) => length,
-            None => 0
-        };
+        let content_length: u64 = response.content_length().unwrap_or_default();
 
         pb.set_length(content_length );
 
