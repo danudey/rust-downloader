@@ -130,8 +130,12 @@ fn download_file(urls: Vec<String>, browser_type: Option<BrowserType>) -> Result
     for url in urls {
         // Parse our URL out so we can get a destination filename
         let parsed_url  = Url::parse(&url)?;
-        let mut path_segments = parsed_url.path_segments().ok_or("cannot be base")?;
-        let url_filename = path_segments.next_back().ok_or("I don't even know what's going on")?;
+        let mut path_segments = parsed_url
+            .path_segments()
+            .ok_or("URL does not contain path segments; cannot derive a base path")?;
+        let url_filename = path_segments
+            .next_back()
+            .ok_or("URL path is empty; cannot determine filename from URL")?;
 
         let client = match &cookie_store {
             Some(store) => {
