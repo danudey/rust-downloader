@@ -175,13 +175,13 @@ fn download_file(urls: Vec<String>, browser_type: Option<BrowserType>) -> Result
         // Bail out if some bad stuff happened
 
         if response.status().is_server_error() {
-            let errstr = format!("{}: got server error from {}: {}", parsed_url.as_str(), response.status().as_str(), response.status().canonical_reason().unwrap());
+            let errstr = format!("{}: got server error {}: {}", parsed_url.as_str(), response.status().as_str(), response.status().canonical_reason().unwrap_or("<unknown>"));
             pb.set_style(errstyle.clone());
             pb.finish_with_message(errstr);
             failed_download = true;
             continue;
         } else if response.status().is_client_error() {
-            let errstr = format!("{}: server reported client error for {}: {}", parsed_url.as_str(), response.status().as_str(), response.status().canonical_reason().unwrap());
+            let errstr = format!("{}: server reported client error {}: {}", parsed_url.as_str(), response.status().as_str(), response.status().canonical_reason().unwrap_or("<unknown>"));
             pb.set_style(errstyle.clone());
             pb.finish_with_message(errstr);
             failed_download = true;
