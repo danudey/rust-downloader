@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/danudey/rust-downloader/compare/v0.3.0...v0.4.0) (2026-03-03)
+
+
+### Features
+
+* add configuration file w/ defaults ([#19](https://github.com/danudey/rust-downloader/issues/19)) ([6eced87](https://github.com/danudey/rust-downloader/commit/6eced874c9179dc943dc201fd9111b040375c9ca))
+
+
+### Bug Fixes
+
+* use URL filename when `content-disposition` header is `attachment` but no filename is specified ([#14](https://github.com/danudey/rust-downloader/issues/14)) ([640b945](https://github.com/danudey/rust-downloader/commit/640b945049e58dace706a076513a333bcd9fb163))
+
 ## [0.3.0](https://github.com/danudey/rust-downloader/compare/v0.2.4...v0.3.0) (2025-11-20)
 
 
