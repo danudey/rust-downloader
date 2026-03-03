@@ -21,7 +21,7 @@ mod config;
 mod cookies;
 
 use browser::{BrowserType, BrowserError, CookieManager};
-use config::AppConfig;
+use config::{AppConfig, EXAMPLE_CONFIG};
 
 /// Validate and parse browser argument
 fn validate_browser_argument(browser_arg: Option<String>) -> Result<Option<BrowserType>, BrowserError> {
@@ -39,9 +39,9 @@ fn validate_browser_argument(browser_arg: Option<String>) -> Result<Option<Brows
 #[derive(Parser, Debug)]
 struct Cli {
     /// The URL to download from
-    #[arg(required = true)]
+    #[arg(required_unless_present = "init_config")]
     urls: Vec<String>,
-    
+
     /// Browser to use for cookies (chrome, firefox, safari, edge)
     #[arg(long, short, value_name = "BROWSER")]
     browser: Option<String>,
@@ -49,6 +49,10 @@ struct Cli {
     /// Disable all cookie fetching
     #[arg(long)]
     no_cookies: bool,
+
+    /// Write an example configuration file and exit
+    #[arg(long)]
+    init_config: bool,
 }
 
 fn download_file(urls: Vec<String>, browser_type: Option<BrowserType>, no_cookies: bool, app_config: Arc<AppConfig>) -> Result<(), Box<dyn std::error::Error>> {
@@ -257,6 +261,41 @@ fn main() {
 
     let args = Cli::parse();
     debug!("Application started with args: {:?}", args);
+
+    // Handle --init-config before anything else
+    if args.init_config {
+        let config_path = match AppConfig::config_path() {
+            Ok(path) => path,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                exit(1);
+            }
+        };
+
+        if config_path.exists() {
+            eprintln!("Config file already exists at: {}", config_path.display());
+            eprintln!("Remove it first if you want to regenerate it.");
+            exit(1);
+        }
+
+        if let Some(parent) = config_path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                eprintln!("Error: Failed to create directory {}: {}", parent.display(), e);
+                exit(1);
+            }
+        }
+
+        match std::fs::write(&config_path, EXAMPLE_CONFIG) {
+            Ok(()) => {
+                println!("Wrote example config to: {}", config_path.display());
+                exit(0);
+            }
+            Err(e) => {
+                eprintln!("Error: Failed to write config file: {}", e);
+                exit(1);
+            }
+        }
+    }
 
     // Load configuration file
     let app_config = AppConfig::load();
@@ -566,6 +605,19 @@ mod tests {
         let args = Cli::try_parse_from(&["download", "--no-cookies", "--browser", "chrome", "http://example.com"]).unwrap();
         assert!(args.no_cookies);
         assert_eq!(args.browser, Some("chrome".to_string()));
+    }
+
+    #[test]
+    fn test_cli_parsing_init_config_no_urls() {
+        let args = Cli::try_parse_from(&["download", "--init-config"]).unwrap();
+        assert!(args.init_config);
+        assert!(args.urls.is_empty());
+    }
+
+    #[test]
+    fn test_cli_parsing_init_config_default() {
+        let args = Cli::try_parse_from(&["download", "http://example.com"]).unwrap();
+        assert!(!args.init_config);
     }
 
     // Integration tests for HTTP requests with cookies from different browsers

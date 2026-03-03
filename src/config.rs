@@ -1,8 +1,32 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use config::{Config, File, FileFormat};
 use log::{debug, info, warn};
 use serde::Deserialize;
+
+pub const EXAMPLE_CONFIG: &str = r#"# rustdl configuration file
+# See https://github.com/danudey/rust-downloader for documentation.
+
+[defaults]
+# Default browser for cookie fetching.
+# Supported values: chrome, chromium, firefox, safari, edge
+# Leave commented out to auto-detect.
+# browser = "firefox"
+
+# Whether to use browser cookies at all (default: true).
+# cookies = true
+
+# Per-domain overrides. The domain key should be the registrable domain
+# (e.g. "example.com", not "sub.example.com").
+#
+# [domains."example.com"]
+# browser = "chrome"   # Use Chrome cookies for this domain
+# cookies = true
+#
+# [domains."public-files.org"]
+# cookies = false       # Never send cookies to this domain
+"#;
 
 #[derive(Debug, Deserialize, Default, Clone)]
 pub struct AppConfig {
@@ -88,6 +112,12 @@ impl AppConfig {
             }
         }
         self.defaults.cookies
+    }
+
+    pub fn config_path() -> Result<PathBuf, String> {
+        let dirs = xdg::BaseDirectories::with_prefix("rustdl");
+        dirs.place_config_file("config.toml")
+            .map_err(|e| format!("Failed to determine config path: {}", e))
     }
 
     pub fn browser_for_domain(&self, domain: &str) -> Option<&str> {
