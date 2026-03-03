@@ -17,9 +17,11 @@ use url::Url;
 use content_disposition::{parse_content_disposition, DispositionType};
 
 mod browser;
+mod config;
 mod cookies;
 
 use browser::{BrowserType, BrowserError, CookieManager};
+use config::{AppConfig, EXAMPLE_CONFIG};
 
 /// Validate and parse browser argument
 fn validate_browser_argument(browser_arg: Option<String>) -> Result<Option<BrowserType>, BrowserError> {
@@ -37,61 +39,74 @@ fn validate_browser_argument(browser_arg: Option<String>) -> Result<Option<Brows
 #[derive(Parser, Debug)]
 struct Cli {
     /// The URL to download from
-    #[arg(required = true)]
+    #[arg(required_unless_present = "init_config")]
     urls: Vec<String>,
-    
+
     /// Browser to use for cookies (chrome, firefox, safari, edge)
     #[arg(long, short, value_name = "BROWSER")]
     browser: Option<String>,
+
+    /// Disable all cookie fetching
+    #[arg(long)]
+    no_cookies: bool,
+
+    /// Write an example configuration file and exit
+    #[arg(long)]
+    init_config: bool,
 }
 
-fn download_file<'a>(urls: Vec<String>, browser_type: Option<BrowserType>) -> Result<(), Box<dyn std::error::Error>> {
-    debug!("Starting download_file with {} URLs and browser type: {:?}", urls.len(), browser_type);
+fn download_file(urls: Vec<String>, browser_type: Option<BrowserType>, no_cookies: bool, app_config: Arc<AppConfig>) -> Result<(), Box<dyn std::error::Error>> {
+    debug!("Starting download_file with {} URLs, browser type: {:?}, no_cookies: {}", urls.len(), browser_type, no_cookies);
     let mut failed_download = false;
 
-    // Create CookieManager based on browser selection
-    let _cookie_manager = match browser_type {
-        Some(browser) => {
-            info!("User specified browser: {}", browser);
-            // User specified a browser, try to use it
-            match CookieManager::new(browser.clone()) {
-                Ok(manager) => {
-                    info!("Successfully created CookieManager with {} browser", manager.browser_name());
-                    debug!("Using {} browser for cookies", manager.browser_name());
-                    Some(manager)
-                }
-                Err(e) => {
-                    warn!("Failed to create CookieManager with {}: {}", browser, e.brief_message());
-                    eprintln!("Warning: {}", e.user_friendly_message());
-                    eprintln!("Falling back to auto-detection...");
-                    match CookieManager::with_auto_detection() {
-                        Ok(manager) => {
-                            info!("Fallback auto-detection successful: {}", manager.browser_name());
-                            debug!("Using {} browser for cookies", manager.browser_name());
-                            Some(manager)
-                        }
-                        Err(fallback_err) => {
-                            warn!("Fallback auto-detection failed: {}", fallback_err.brief_message());
-                            eprintln!("Warning: {}", fallback_err.user_friendly_message());
-                            None
+    // Create CookieManager based on browser selection (skip if cookies disabled)
+    let _cookie_manager = if no_cookies {
+        debug!("Cookies disabled, skipping CookieManager creation");
+        None
+    } else {
+        match browser_type {
+            Some(browser) => {
+                info!("User specified browser: {}", browser);
+                // User specified a browser, try to use it
+                match CookieManager::new(browser.clone()) {
+                    Ok(manager) => {
+                        info!("Successfully created CookieManager with {} browser", manager.browser_name());
+                        debug!("Using {} browser for cookies", manager.browser_name());
+                        Some(manager)
+                    }
+                    Err(e) => {
+                        warn!("Failed to create CookieManager with {}: {}", browser, e.brief_message());
+                        eprintln!("Warning: {}", e.user_friendly_message());
+                        eprintln!("Falling back to auto-detection...");
+                        match CookieManager::with_auto_detection() {
+                            Ok(manager) => {
+                                info!("Fallback auto-detection successful: {}", manager.browser_name());
+                                debug!("Using {} browser for cookies", manager.browser_name());
+                                Some(manager)
+                            }
+                            Err(fallback_err) => {
+                                warn!("Fallback auto-detection failed: {}", fallback_err.brief_message());
+                                eprintln!("Warning: {}", fallback_err.user_friendly_message());
+                                None
+                            }
                         }
                     }
                 }
             }
-        }
-        None => {
-            debug!("No browser specified, using fallback with Firefox preference");
-            // No browser specified, use auto-detection for backward compatibility
-            // Default to Firefox first for backward compatibility, then auto-detect
-            match CookieManager::with_fallback(Some(BrowserType::Firefox)) {
-                Ok(manager) => {
-                    info!("Fallback CookieManager created with: {}", manager.browser_name());
-                    debug!("Using {} browser for cookies", manager.browser_name());
-                    Some(manager)
-                }
-                Err(e) => {
-                    warn!("Fallback CookieManager creation failed: {}", e.brief_message());
-                    None
+            None => {
+                debug!("No browser specified, using fallback with Firefox preference");
+                // No browser specified, use auto-detection for backward compatibility
+                // Default to Firefox first for backward compatibility, then auto-detect
+                match CookieManager::with_fallback(Some(BrowserType::Firefox)) {
+                    Ok(manager) => {
+                        info!("Fallback CookieManager created with: {}", manager.browser_name());
+                        debug!("Using {} browser for cookies", manager.browser_name());
+                        Some(manager)
+                    }
+                    Err(e) => {
+                        warn!("Fallback CookieManager creation failed: {}", e.brief_message());
+                        None
+                    }
                 }
             }
         }
@@ -119,7 +134,7 @@ fn download_file<'a>(urls: Vec<String>, browser_type: Option<BrowserType>) -> Re
     // Use the CookieManager that was created earlier in the function
     let cookie_store = match _cookie_manager {
         Some(cookie_manager) => {
-            let cookiejar_wrapper = cookies::CookieJarWrapper::new(cookie_manager);
+            let cookiejar_wrapper = cookies::CookieJarWrapper::new(cookie_manager, app_config);
             Some(std::sync::Arc::new(cookiejar_wrapper))
         }
         None => {
@@ -243,24 +258,75 @@ fn download_file<'a>(urls: Vec<String>, browser_type: Option<BrowserType>) -> Re
 fn main() {
     // Initialize logging
     env_logger::init();
-        
+
     let args = Cli::parse();
     debug!("Application started with args: {:?}", args);
 
-    // Validate browser argument if provided
-    let browser_type = match validate_browser_argument(args.browser.clone()) {
-        Ok(browser) => {
-            debug!("Browser argument validation successful: {:?}", browser);
-            browser
-        }
-        Err(e) => {
-            error!("{}", e.user_friendly_message());
+    // Handle --init-config before anything else
+    if args.init_config {
+        let config_path = match AppConfig::config_path() {
+            Ok(path) => path,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                exit(1);
+            }
+        };
+
+        if config_path.exists() {
+            eprintln!("Config file already exists at: {}", config_path.display());
+            eprintln!("Remove it first if you want to regenerate it.");
             exit(1);
+        }
+
+        if let Some(parent) = config_path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                eprintln!("Error: Failed to create directory {}: {}", parent.display(), e);
+                exit(1);
+            }
+        }
+
+        match std::fs::write(&config_path, EXAMPLE_CONFIG) {
+            Ok(()) => {
+                println!("Wrote example config to: {}", config_path.display());
+                exit(0);
+            }
+            Err(e) => {
+                eprintln!("Error: Failed to write config file: {}", e);
+                exit(1);
+            }
+        }
+    }
+
+    // Load configuration file
+    let app_config = AppConfig::load();
+    debug!("Loaded config: {:?}", app_config);
+
+    // Compute effective no_cookies: CLI flag overrides config
+    let no_cookies = args.no_cookies || !app_config.defaults.cookies;
+
+    // Validate browser argument if provided (skip if cookies disabled)
+    let browser_type = if no_cookies {
+        debug!("Cookies disabled, skipping browser validation");
+        None
+    } else {
+        // CLI --browser overrides config default browser
+        let browser_arg = args.browser.clone().or_else(|| app_config.defaults.browser.clone());
+        match validate_browser_argument(browser_arg) {
+            Ok(browser) => {
+                debug!("Browser argument validation successful: {:?}", browser);
+                browser
+            }
+            Err(e) => {
+                error!("{}", e.user_friendly_message());
+                exit(1);
+            }
         }
     };
 
+    let app_config = Arc::new(app_config);
+
     debug!("Starting download process for {} URLs", args.urls.len());
-    let result = download_file(args.urls, browser_type);
+    let result = download_file(args.urls, browser_type, no_cookies, app_config);
     match result {
         Ok(()) => {
             debug!("Download process completed successfully");
@@ -520,19 +586,53 @@ mod tests {
         assert!(message.contains("chrome") || message.contains("firefox"));
     }
 
+    // --no-cookies flag tests
+    #[test]
+    fn test_cli_parsing_no_cookies_flag() {
+        let args = Cli::try_parse_from(&["download", "--no-cookies", "http://example.com"]).unwrap();
+        assert!(args.no_cookies);
+        assert_eq!(args.urls, vec!["http://example.com"]);
+    }
+
+    #[test]
+    fn test_cli_parsing_no_cookies_default() {
+        let args = Cli::try_parse_from(&["download", "http://example.com"]).unwrap();
+        assert!(!args.no_cookies);
+    }
+
+    #[test]
+    fn test_cli_parsing_no_cookies_with_browser() {
+        let args = Cli::try_parse_from(&["download", "--no-cookies", "--browser", "chrome", "http://example.com"]).unwrap();
+        assert!(args.no_cookies);
+        assert_eq!(args.browser, Some("chrome".to_string()));
+    }
+
+    #[test]
+    fn test_cli_parsing_init_config_no_urls() {
+        let args = Cli::try_parse_from(&["download", "--init-config"]).unwrap();
+        assert!(args.init_config);
+        assert!(args.urls.is_empty());
+    }
+
+    #[test]
+    fn test_cli_parsing_init_config_default() {
+        let args = Cli::try_parse_from(&["download", "http://example.com"]).unwrap();
+        assert!(!args.init_config);
+    }
+
     // Integration tests for HTTP requests with cookies from different browsers
     #[test]
     fn test_integration_cookie_jar_wrapper_with_reqwest() {
         use crate::cookies::CookieJarWrapper;
         use reqwest::cookie::CookieStore;
         use url::Url;
-        
+
         // Test that CookieJarWrapper can be used with reqwest
         // We'll use auto-detection to get any available browser
         if let Ok(cookie_manager) = CookieManager::with_auto_detection() {
-            let jar = CookieJarWrapper::new(cookie_manager);
+            let jar = CookieJarWrapper::new(cookie_manager, Arc::new(AppConfig::default()));
             let url = Url::parse("https://example.com").unwrap();
-            
+
             // Test that the cookies method can be called without panicking
             let _result = jar.cookies(&url);
             // We can't assert specific values since it depends on actual browser state
@@ -544,7 +644,7 @@ mod tests {
     fn test_integration_client_creation_with_cookies() {
         // Test that we can create a reqwest client with cookie support
         if let Ok(cookie_manager) = CookieManager::with_auto_detection() {
-            let cookiejar_wrapper = crate::cookies::CookieJarWrapper::new(cookie_manager);
+            let cookiejar_wrapper = crate::cookies::CookieJarWrapper::new(cookie_manager, Arc::new(AppConfig::default()));
             let cookie_store = std::sync::Arc::new(cookiejar_wrapper);
             
             // Test that we can create a client with the cookie store
@@ -583,7 +683,7 @@ mod tests {
         }
         
         let error_manager = CookieManager::with_strategy(Box::new(ErrorStrategy));
-        let jar = CookieJarWrapper::new(error_manager);
+        let jar = CookieJarWrapper::new(error_manager, Arc::new(AppConfig::default()));
         let url = Url::parse("https://example.com").unwrap();
         
         // Should return None when cookie fetching fails, not panic
@@ -621,7 +721,7 @@ mod tests {
         }
         
         let test_manager = CookieManager::with_strategy(Box::new(TestStrategy));
-        let jar = CookieJarWrapper::new(test_manager);
+        let jar = CookieJarWrapper::new(test_manager, Arc::new(AppConfig::default()));
         
         // Test matching URL
         let matching_url = Url::parse("https://example.com/page").unwrap();

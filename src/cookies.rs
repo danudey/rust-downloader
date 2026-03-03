@@ -1,19 +1,30 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
 use tldextract::{TldExtractor, TldOption};
 
 use reqwest::header::{self, HeaderValue};
 
 use rookie::{common::enums::CookieToString, common::enums::Cookie};
-use crate::browser::CookieManager;
-use log::{debug, warn};
+use crate::browser::{BrowserType, CookieManager};
+use crate::config::AppConfig;
+use log::{debug, info, warn};
 
 pub struct CookieJarWrapper {
     cookie_manager: CookieManager,
+    app_config: Arc<AppConfig>,
+    browser_cache: Mutex<HashMap<String, CookieManager>>,
 }
 
 impl CookieJarWrapper {
-    pub fn new(cookie_manager: CookieManager) -> Self {
-        Self { cookie_manager }
+    pub fn new(cookie_manager: CookieManager, app_config: Arc<AppConfig>) -> Self {
+        Self {
+            cookie_manager,
+            app_config,
+            browser_cache: Mutex::new(HashMap::new()),
+        }
     }
+
 }
 
 pub fn cookie_matches_url(cookie: &Cookie, url: &url::Url) -> bool {
@@ -48,7 +59,7 @@ pub fn cookie_matches_url(cookie: &Cookie, url: &url::Url) -> bool {
         Some(offset) => offset,
         None => 0
     };
-    
+
     // If domain_offset is 0 (or less?), then no
     let last_char_before_cookie_domain_is_periodt = if domain_offset <= 0 {
         false
@@ -84,10 +95,10 @@ impl reqwest::cookie::CookieStore for CookieJarWrapper {
         debug!("Discarding incoming cookie for URL: {}", url.as_str());
         // Note: We don't store incoming cookies, only read existing browser cookies
     }
-    
+
     fn cookies(&self, url: &url::Url) -> Option<HeaderValue> {
         debug!("Fetching cookies for URL: {}", url.as_str());
-        
+
         let extractor: TldExtractor = TldOption::default().build();
         let tldinfo = match extractor.extract(url.as_str()) {
             Ok(info) => info,
@@ -96,7 +107,7 @@ impl reqwest::cookie::CookieStore for CookieJarWrapper {
                         return None;
                     }
         };
-        
+
         let domain = match tldinfo.domain {
             Some(domain) => domain,
             None => {
@@ -104,7 +115,7 @@ impl reqwest::cookie::CookieStore for CookieJarWrapper {
                 return None;
             }
         };
-        
+
         let suffix = match tldinfo.suffix {
             Some(suffix) => suffix,
             None => {
@@ -112,19 +123,95 @@ impl reqwest::cookie::CookieStore for CookieJarWrapper {
                 return None;
             }
         };
-        
+
         let together = format!("{}.{}", domain, suffix);
         debug!("Extracted domain for cookie lookup: {}", together);
 
-        // Use the injected CookieManager instead of hardcoded Firefox
-        let cookies = match self.cookie_manager.fetch_cookies_for_domain(together.clone()) {
-            Ok(cookies) => {
-                debug!("Retrieved {} cookies from browser for domain: {}", cookies.len(), together);
-                cookies
+        // Check per-domain cookie disable
+        if !self.app_config.cookies_enabled_for_domain(&together) {
+            debug!("Cookies disabled for domain {} by config", together);
+            return None;
+        }
+
+        // Check if we need a different browser for this domain
+        let cookies = match self.app_config.browser_for_domain(&together) {
+            Some(browser_name) if browser_name != self.cookie_manager.browser_name() => {
+                debug!(
+                    "Domain {} requires browser '{}' (default is '{}')",
+                    together,
+                    browser_name,
+                    self.cookie_manager.browser_name()
+                );
+                let mut cache = self.browser_cache.lock().unwrap();
+                if !cache.contains_key(browser_name) {
+                    match browser_name.parse::<BrowserType>() {
+                        Ok(bt) => match CookieManager::new(bt) {
+                            Ok(manager) => {
+                                info!("Created cached CookieManager for browser '{}'", browser_name);
+                                cache.insert(browser_name.to_string(), manager);
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Failed to create CookieManager for browser '{}': {}",
+                                    browser_name,
+                                    e.brief_message()
+                                );
+                                return None;
+                            }
+                        },
+                        Err(e) => {
+                            warn!(
+                                "Invalid browser '{}' in config for domain {}: {}",
+                                browser_name, together, e
+                            );
+                            return None;
+                        }
+                    }
+                }
+                match cache.get(browser_name) {
+                    Some(manager) => match manager.fetch_cookies_for_domain(together.clone()) {
+                        Ok(cookies) => {
+                            debug!(
+                                "Retrieved {} cookies from {} for domain: {}",
+                                cookies.len(),
+                                browser_name,
+                                together
+                            );
+                            cookies
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to fetch cookies from {} for domain {}: {}",
+                                browser_name,
+                                together,
+                                e.brief_message()
+                            );
+                            return None;
+                        }
+                    },
+                    None => return None,
+                }
             }
-            Err(e) => {
-                warn!("Failed to fetch cookies for domain {}: {}", together, e.brief_message());
-                return None;
+            _ => {
+                // Use the default cookie manager
+                match self.cookie_manager.fetch_cookies_for_domain(together.clone()) {
+                    Ok(cookies) => {
+                        debug!(
+                            "Retrieved {} cookies from browser for domain: {}",
+                            cookies.len(),
+                            together
+                        );
+                        cookies
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to fetch cookies for domain {}: {}",
+                            together,
+                            e.brief_message()
+                        );
+                        return None;
+                    }
+                }
             }
         };
 
@@ -135,7 +222,7 @@ impl reqwest::cookie::CookieStore for CookieJarWrapper {
                     debug!("Cookie {} matches URL {}", cookie.name, url.as_str());
                     Some(cookie)
                 } else {
-                    debug!("Cookie {} does not match URL {} (domain: {}, path: {})", 
+                    debug!("Cookie {} does not match URL {} (domain: {}, path: {})",
                            cookie.name, url.as_str(), cookie.domain, cookie.path);
                     None
                 }
@@ -148,8 +235,8 @@ impl reqwest::cookie::CookieStore for CookieJarWrapper {
         }
 
         let cookie_header = matching_cookies.to_string();
-        debug!("Sending {} matching cookies for URL: {} (cookie names: {:?})", 
-               matching_cookies.len(), 
+        debug!("Sending {} matching cookies for URL: {} (cookie names: {:?})",
+               matching_cookies.len(),
                url.as_str(),
                matching_cookies.iter().map(|c| &c.name).collect::<Vec<_>>());
 
@@ -165,6 +252,7 @@ mod tests {
     use url::Url;
     use rookie::common::enums::Cookie;
     use crate::browser::{BrowserStrategy, BrowserError, CookieManager};
+    use crate::config::{AppConfig, DomainConfig};
     use reqwest::cookie::CookieStore;
 
     fn make_cookie(domain: &str, path: &str) -> Cookie {
@@ -180,11 +268,16 @@ mod tests {
         }
     }
 
+    fn default_app_config() -> Arc<AppConfig> {
+        Arc::new(AppConfig::default())
+    }
+
     // Mock browser strategy for testing CookieJarWrapper
     struct MockBrowserStrategy {
         cookie_templates: Vec<(String, String)>, // (domain, path) pairs
         should_error: bool,
         error_message: String,
+        name: &'static str,
     }
 
     impl MockBrowserStrategy {
@@ -193,6 +286,7 @@ mod tests {
                 cookie_templates,
                 should_error: false,
                 error_message: String::new(),
+                name: "mock",
             }
         }
 
@@ -201,6 +295,7 @@ mod tests {
                 cookie_templates: Vec::new(),
                 should_error: true,
                 error_message: error_message.to_string(),
+                name: "mock",
             }
         }
 
@@ -226,7 +321,7 @@ mod tests {
         }
 
         fn browser_name(&self) -> &'static str {
-            "mock"
+            self.name
         }
     }
 
@@ -288,7 +383,7 @@ mod tests {
             ("test.com".to_string(), "/api".to_string()),
         ];
         let cookie_manager = create_mock_cookie_manager(cookie_templates);
-        let jar = CookieJarWrapper::new(cookie_manager);
+        let jar = CookieJarWrapper::new(cookie_manager, default_app_config());
 
         let url = Url::parse("https://example.com/page").unwrap();
         let result = jar.cookies(&url);
@@ -306,7 +401,7 @@ mod tests {
             ("different.com".to_string(), "/api".to_string()),
         ];
         let cookie_manager = create_mock_cookie_manager(cookie_templates);
-        let jar = CookieJarWrapper::new(cookie_manager);
+        let jar = CookieJarWrapper::new(cookie_manager, default_app_config());
 
         let url = Url::parse("https://example.com/page").unwrap();
         let result = jar.cookies(&url);
@@ -321,7 +416,7 @@ mod tests {
             ("example.com".to_string(), "/admin".to_string()),
         ];
         let cookie_manager = create_mock_cookie_manager(cookie_templates);
-        let jar = CookieJarWrapper::new(cookie_manager);
+        let jar = CookieJarWrapper::new(cookie_manager, default_app_config());
 
         // Should match /api path
         let api_url = Url::parse("https://example.com/api/users").unwrap();
@@ -341,7 +436,7 @@ mod tests {
             ("specific.example.com".to_string(), "/".to_string()),
         ];
         let cookie_manager = create_mock_cookie_manager(cookie_templates);
-        let jar = CookieJarWrapper::new(cookie_manager);
+        let jar = CookieJarWrapper::new(cookie_manager, default_app_config());
 
         // Should match subdomain with dot prefix
         let subdomain_url = Url::parse("https://sub.example.com/page").unwrap();
@@ -352,7 +447,7 @@ mod tests {
     #[test]
     fn test_cookie_jar_wrapper_with_cookie_manager_error() {
         let cookie_manager = create_error_cookie_manager("Database locked");
-        let jar = CookieJarWrapper::new(cookie_manager);
+        let jar = CookieJarWrapper::new(cookie_manager, default_app_config());
 
         let url = Url::parse("https://example.com/page").unwrap();
         let result = jar.cookies(&url);
@@ -365,7 +460,7 @@ mod tests {
     fn test_cookie_jar_wrapper_with_empty_cookie_list() {
         let cookie_templates = vec![];
         let cookie_manager = create_mock_cookie_manager(cookie_templates);
-        let jar = CookieJarWrapper::new(cookie_manager);
+        let jar = CookieJarWrapper::new(cookie_manager, default_app_config());
 
         let url = Url::parse("https://example.com/page").unwrap();
         let result = jar.cookies(&url);
@@ -382,7 +477,7 @@ mod tests {
             ("other.com".to_string(), "/".to_string()),
         ];
         let cookie_manager = create_mock_cookie_manager(cookie_templates);
-        let jar = CookieJarWrapper::new(cookie_manager);
+        let jar = CookieJarWrapper::new(cookie_manager, default_app_config());
 
         // Test exact domain match
         let exact_url = Url::parse("https://example.com/foo/test").unwrap();
@@ -398,5 +493,71 @@ mod tests {
         let different_url = Url::parse("https://unrelated.com/").unwrap();
         let different_result = jar.cookies(&different_url);
         assert!(different_result.is_none());
+    }
+
+    // Per-domain cookie disable tests
+    #[test]
+    fn test_cookie_jar_wrapper_domain_cookies_disabled() {
+        let cookie_templates = vec![
+            ("example.com".to_string(), "/".to_string()),
+        ];
+        let cookie_manager = create_mock_cookie_manager(cookie_templates);
+
+        let mut config = AppConfig::default();
+        config.domains.insert(
+            "example.com".to_string(),
+            DomainConfig {
+                cookies: Some(false),
+                browser: None,
+            },
+        );
+
+        let jar = CookieJarWrapper::new(cookie_manager, Arc::new(config));
+
+        let url = Url::parse("https://example.com/page").unwrap();
+        let result = jar.cookies(&url);
+        assert!(result.is_none(), "Cookies should be disabled for example.com");
+    }
+
+    #[test]
+    fn test_cookie_jar_wrapper_other_domain_unaffected() {
+        let cookie_templates = vec![
+            ("example.com".to_string(), "/".to_string()),
+            ("other.com".to_string(), "/".to_string()),
+        ];
+        let cookie_manager = create_mock_cookie_manager(cookie_templates);
+
+        let mut config = AppConfig::default();
+        config.domains.insert(
+            "other.com".to_string(),
+            DomainConfig {
+                cookies: Some(false),
+                browser: None,
+            },
+        );
+
+        let jar = CookieJarWrapper::new(cookie_manager, Arc::new(config));
+
+        // example.com should still get cookies
+        let url = Url::parse("https://example.com/page").unwrap();
+        let result = jar.cookies(&url);
+        assert!(result.is_some(), "Cookies should still work for example.com");
+    }
+
+    #[test]
+    fn test_cookie_jar_wrapper_global_cookies_disabled() {
+        let cookie_templates = vec![
+            ("example.com".to_string(), "/".to_string()),
+        ];
+        let cookie_manager = create_mock_cookie_manager(cookie_templates);
+
+        let mut config = AppConfig::default();
+        config.defaults.cookies = false;
+
+        let jar = CookieJarWrapper::new(cookie_manager, Arc::new(config));
+
+        let url = Url::parse("https://example.com/page").unwrap();
+        let result = jar.cookies(&url);
+        assert!(result.is_none(), "Cookies should be globally disabled");
     }
 }
