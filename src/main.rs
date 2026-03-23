@@ -186,13 +186,13 @@ fn download_file(urls: Vec<String>, browser_type: Option<BrowserType>, no_cookie
         // Bail out if some bad stuff happened
 
         if response.status().is_server_error() {
-            let errstr = format!("{}: server returned {} {}", parsed_url.as_str(), response.status().as_str(), response.status().canonical_reason().unwrap());
+            let errstr = format!("{}: server error: server returned {} {}", parsed_url.as_str(), response.status().as_str(), response.status().canonical_reason().unwrap());
             pb.set_style(errstyle.clone());
             pb.finish_with_message(errstr);
             failed_download = true;
             continue;
-        } else if  response.status().is_client_error() {
-            let errstr = format!("{}: server returned {} {}", parsed_url.as_str(), response.status().as_str(), response.status().canonical_reason().unwrap());
+        } else if response.status().is_client_error() {
+            let errstr = format!("{}: client error: server returned {} {}", parsed_url.as_str(), response.status().as_str(), response.status().canonical_reason().unwrap());
             pb.set_style(errstyle.clone());
             pb.finish_with_message(errstr);
             failed_download = true;
@@ -200,10 +200,7 @@ fn download_file(urls: Vec<String>, browser_type: Option<BrowserType>, no_cookie
         }
 
         // Check the Content-Length header if we got one; otherwise, set it to zero
-        let content_length = match response.content_length() {
-            Some(length) => length,
-            None => 0
-        };
+        let content_length = response.content_length().unwrap_or_default();
 
         pb.set_length(content_length );
 

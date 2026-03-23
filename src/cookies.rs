@@ -55,10 +55,7 @@ pub fn cookie_matches_url(cookie: &Cookie, url: &url::Url) -> bool {
     };
 
     let url_domain = url.domain().unwrap();
-    let domain_offset = match url_domain.find(cookie_domain_noprefix) {
-        Some(offset) => offset,
-        None => 0
-    };
+    let domain_offset = url_domain.find(cookie_domain_noprefix).unwrap_or_default();
 
     // If domain_offset is 0 (or less?), then no
     let last_char_before_cookie_domain_is_periodt = if domain_offset == 0 {
