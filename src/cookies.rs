@@ -218,7 +218,7 @@ impl reqwest::cookie::CookieStore for CookieJarWrapper {
         let matching_cookies: Vec<_> = cookies.into_iter().filter_map(
             |cookie|
             {
-                if cookie_matches_url(&cookie, &url) {
+                if cookie_matches_url(&cookie, url) {
                     debug!("Cookie {} matches URL {}", cookie.name, url.as_str());
                     Some(cookie)
                 } else {

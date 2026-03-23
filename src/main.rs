@@ -11,7 +11,6 @@ use reqwest::header::{self};
 
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
-use url;
 use url::Url;
 
 use content_disposition::{parse_content_disposition, DispositionType};
@@ -146,8 +145,8 @@ fn download_file(urls: Vec<String>, browser_type: Option<BrowserType>, no_cookie
     for url in urls {
         // Parse our URL out so we can get a destination filename
         let parsed_url  = Url::parse(&url)?;
-        let path_segments = parsed_url.path_segments().ok_or_else(|| "cannot be base")?;
-        let url_filename = path_segments.last().ok_or_else(|| "I don't even know what's going on")?;
+        let mut path_segments = parsed_url.path_segments().ok_or("cannot be base")?;
+        let url_filename = path_segments.next_back().ok_or("I don't even know what's going on")?;
 
         let client = match &cookie_store {
             Some(store) => {
@@ -278,12 +277,11 @@ fn main() {
             exit(1);
         }
 
-        if let Some(parent) = config_path.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
+        if let Some(parent) = config_path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent) {
                 eprintln!("Error: Failed to create directory {}: {}", parent.display(), e);
                 exit(1);
             }
-        }
 
         match std::fs::write(&config_path, EXAMPLE_CONFIG) {
             Ok(()) => {
