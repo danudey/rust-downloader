@@ -184,20 +184,18 @@ fn download_file(urls: Vec<String>, browser_type: Option<BrowserType>, no_cookie
         let pb: ProgressBar = multiprog.add(ProgressBar::new(0).with_style(style.clone()));
 
         // Bail out if some bad stuff happened
-
-        if response.status().is_server_error() {
-            let errstr = format!("{}: server error: server returned {} {}", parsed_url.as_str(), response.status().as_str(), response.status().canonical_reason().unwrap());
+        if !response.status().is_success() {
+            let errstrmsg = if response.status().is_server_error() {
+                "server"
+            } else {
+                "client"
+            };
+            let errstr = format!("{}: {} error: server returned {} {}", parsed_url.as_str(), errstrmsg, response.status().as_str(), response.status().canonical_reason().unwrap_or("Uknown status code"));
             pb.set_style(errstyle.clone());
             pb.finish_with_message(errstr);
             failed_download = true;
             continue;
-        } else if response.status().is_client_error() {
-            let errstr = format!("{}: client error: server returned {} {}", parsed_url.as_str(), response.status().as_str(), response.status().canonical_reason().unwrap());
-            pb.set_style(errstyle.clone());
-            pb.finish_with_message(errstr);
-            failed_download = true;
-            continue;
-        }
+        };
 
         // Check the Content-Length header if we got one; otherwise, set it to zero
         let content_length = response.content_length().unwrap_or_default();
