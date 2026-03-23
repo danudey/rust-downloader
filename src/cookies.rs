@@ -61,7 +61,7 @@ pub fn cookie_matches_url(cookie: &Cookie, url: &url::Url) -> bool {
     };
 
     // If domain_offset is 0 (or less?), then no
-    let last_char_before_cookie_domain_is_periodt = if domain_offset <= 0 {
+    let last_char_before_cookie_domain_is_periodt = if domain_offset == 0 {
         false
     } else {
         // If domain_offset > 0, then
