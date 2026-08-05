@@ -1,5 +1,8 @@
-use std::process::Command;
+use std::env;
+use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
+use std::sync::OnceLock;
 
 // Helper function to get the path to the compiled binary.
 //
@@ -10,10 +13,23 @@ fn get_binary_path() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_download"))
 }
 
+// An empty config directory, so the tests see the built-in defaults instead of
+// whatever config.toml the machine running them happens to have.
+fn isolated_config_home() -> &'static PathBuf {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = env::temp_dir().join(format!("rustdl-tests-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("Failed to create isolated config dir");
+        dir
+    })
+}
+
 // Helper function to run the download command with arguments
 fn run_download_command(args: &[&str]) -> std::process::Output {
     Command::new(get_binary_path())
         .args(args)
+        .env("XDG_CONFIG_HOME", isolated_config_home())
+        .env("XDG_CONFIG_DIRS", "")
         .output()
         .expect("Failed to execute download command")
 }
