@@ -1,8 +1,11 @@
 use rookie::common::enums::Cookie;
-use rookie::{any_browser, brave, chrome, chromium, edge, firefox};
+use rookie::{chrome, chromium, chromium_based, edge, firefox};
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
+
+#[cfg(unix)]
+use rookie::config::get_browser_config;
 use log::{debug, info, warn, error};
 
 #[cfg(target_os = "macos")]
@@ -95,23 +98,6 @@ impl BrowserType {
         }
     }
 
-    /// Check whether a browser name reported by a strategy came from this browser type.
-    ///
-    /// `brave` resolves to whichever edition is installed, so it answers to the
-    /// names of both editions as well as its own. (Used by the tests, which
-    /// cannot assume which browsers a given machine has installed.)
-    #[cfg(test)]
-    pub fn reports_as(&self, browser_name: &str) -> bool {
-        match self {
-            BrowserType::Brave => [
-                BrowserType::Brave.as_str(),
-                BrowserType::BraveStandard.as_str(),
-                BrowserType::BraveOrigin.as_str(),
-            ]
-            .contains(&browser_name),
-            other => other.as_str() == browser_name,
-        }
-    }
 }
 
 impl fmt::Display for BrowserType {
@@ -652,80 +638,155 @@ impl BrowserStrategy for EdgeStrategy {
     }
 }
 
-/// The directory Brave's standard release keeps its profiles in
-const BRAVE_STANDARD_DIR: &str = "Brave-Browser";
+/// A Brave edition, and the packaging-specific names needed to find it
+struct BraveEdition {
+    /// The directory it keeps its profiles in, under `BraveSoftware`
+    product_dir: &'static str,
+    /// The Flatpak application id, for editions published as a Flatpak
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    flatpak_app_id: Option<&'static str>,
+    /// The snap package name, for editions published as a snap
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    snap_package: Option<&'static str>,
+}
 
-/// The directory the Brave Origin edition keeps its profiles in
-const BRAVE_ORIGIN_DIR: &str = "Brave-Origin";
+/// The standard Brave Browser release
+const BRAVE_STANDARD: BraveEdition = BraveEdition {
+    product_dir: "Brave-Browser",
+    flatpak_app_id: Some("com.brave.Browser"),
+    snap_package: Some("brave"),
+};
+
+/// The Brave Origin edition, which is only distributed as a native package
+const BRAVE_ORIGIN: BraveEdition = BraveEdition {
+    product_dir: "Brave-Origin",
+    flatpak_app_id: None,
+    snap_package: None,
+};
+
+/// Non-stable channels install alongside the stable release, with the channel
+/// name appended to the product directory (e.g. `Brave-Browser-Beta`). Stable
+/// comes first, so a stable install always wins.
+const BRAVE_CHANNELS: [&str; 4] = ["", "-Beta", "-Development", "-Nightly"];
 
 /// A located Brave profile directory and the files needed to read its cookies
 struct BraveProfile {
     /// The cookie database itself
     cookies: PathBuf,
-    /// The `Local State` file holding the encryption key (needed on Windows)
+    /// The `Local State` file holding the encryption key. Only Windows needs
+    /// it; the other platforms take the key from the keyring or keychain.
+    #[cfg_attr(unix, allow(dead_code))]
     local_state: PathBuf,
 }
 
-/// Every directory a Brave edition might keep its profiles in.
+/// Every directory a Brave edition might keep its profiles in, across every
+/// release channel.
+fn brave_profile_roots(edition: &BraveEdition) -> Vec<PathBuf> {
+    BRAVE_CHANNELS
+        .iter()
+        .flat_map(|channel| {
+            brave_channel_roots(edition, &format!("{}{}", edition.product_dir, channel))
+        })
+        .collect()
+}
+
+/// The directories one channel of a Brave edition might keep its profiles in
 ///
-/// Brave's editions differ only by the directory name under `BraveSoftware`,
-/// e.g. `Brave-Browser` for the standard release and `Brave-Origin` for Brave
-/// Origin, so all of them can share this lookup.
-fn brave_profile_roots(product_dir: &str) -> Vec<PathBuf> {
-    let Some(home_dir) = dirs::home_dir() else {
-        return Vec::new();
-    };
+/// Only this platform's locations are listed; the others cannot match anything.
+#[allow(unused_variables)]
+fn brave_channel_roots(edition: &BraveEdition, product_dir: &str) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
 
-    let mut roots = vec![
-        // Linux
-        home_dir
-            .join(".config")
-            .join("BraveSoftware")
-            .join(product_dir),
-        // Linux, Flatpak
-        home_dir
-            .join(".var")
-            .join("app")
-            .join("com.brave.Browser")
-            .join("config")
-            .join("BraveSoftware")
-            .join(product_dir),
-        // macOS
-        home_dir
-            .join("Library")
-            .join("Application Support")
-            .join("BraveSoftware")
-            .join(product_dir),
-        // Windows
-        home_dir
-            .join("AppData")
-            .join("Local")
-            .join("BraveSoftware")
-            .join(product_dir)
-            .join("User Data"),
-    ];
-
-    // Linux, snap: the revision number is part of the path, so enumerate them
-    if let Ok(revisions) = std::fs::read_dir(home_dir.join("snap").join("brave")) {
-        roots.extend(revisions.flatten().map(|revision| {
-            revision
-                .path()
+    #[cfg(target_os = "linux")]
+    if let Some(home_dir) = dirs::home_dir() {
+        roots.push(
+            home_dir
                 .join(".config")
                 .join("BraveSoftware")
+                .join(product_dir),
+        );
+
+        if let Some(app_id) = edition.flatpak_app_id {
+            roots.push(
+                home_dir
+                    .join(".var")
+                    .join("app")
+                    .join(app_id)
+                    .join("config")
+                    .join("BraveSoftware")
+                    .join(product_dir),
+            );
+        }
+
+        // The snap revision number is part of the path, so enumerate them
+        if let Some(package) = edition.snap_package
+            && let Ok(revisions) = std::fs::read_dir(home_dir.join("snap").join(package))
+        {
+            roots.extend(revisions.flatten().map(|revision| {
+                revision
+                    .path()
+                    .join(".config")
+                    .join("BraveSoftware")
+                    .join(product_dir)
+            }));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    if let Some(home_dir) = dirs::home_dir() {
+        roots.push(
+            home_dir
+                .join("Library")
+                .join("Application Support")
+                .join("BraveSoftware")
+                .join(product_dir),
+        );
+    }
+
+    // Brave installs under %LOCALAPPDATA%, but a roaming profile can put it
+    // under %APPDATA% instead, so check both.
+    #[cfg(target_os = "windows")]
+    for base in [dirs::data_local_dir(), dirs::data_dir()].into_iter().flatten() {
+        roots.push(
+            base.join("BraveSoftware")
                 .join(product_dir)
-        }));
+                .join("User Data"),
+        );
     }
 
     roots
 }
 
-/// Find the profile of an installed Brave edition, if there is one
-fn find_brave_profile(product_dir: &str) -> Option<BraveProfile> {
-    for root in brave_profile_roots(product_dir) {
+/// The profile directories inside a Brave root, in the order Brave creates
+/// them: `Default` first, then any `Profile N` directories, by name.
+fn brave_profile_dirs(root: &Path) -> Vec<PathBuf> {
+    let mut profiles = vec![root.join("Default")];
+
+    if let Ok(entries) = std::fs::read_dir(root) {
+        let mut numbered: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("Profile "))
+            })
+            .collect();
+
+        numbered.sort();
+        profiles.extend(numbered);
+    }
+
+    profiles
+}
+
+/// Find the cookie database inside one Brave profile root, if there is one
+fn find_brave_profile_in(root: &Path) -> Option<BraveProfile> {
+    for profile in brave_profile_dirs(root) {
         // Newer Chromium releases moved the cookie database under Network/
         let candidates = [
-            root.join("Default").join("Network").join("Cookies"),
-            root.join("Default").join("Cookies"),
+            profile.join("Network").join("Cookies"),
+            profile.join("Cookies"),
         ];
 
         if let Some(cookies) = candidates.into_iter().find(|path| path.is_file()) {
@@ -740,6 +801,75 @@ fn find_brave_profile(product_dir: &str) -> Option<BraveProfile> {
     None
 }
 
+/// Find the profile of an installed Brave edition, if there is one
+fn find_brave_profile(edition: &BraveEdition) -> Option<BraveProfile> {
+    brave_profile_roots(edition)
+        .iter()
+        .find_map(|root| find_brave_profile_in(root))
+}
+
+/// Read cookies from a Brave cookie database at a known path.
+///
+/// Both editions read cookies this way, so availability and fetching always
+/// agree about which profile they are talking about. `rookie::brave` is not
+/// used because it does its own path lookup, which knows nothing about Brave
+/// Origin and disagrees with this one about channels and profile directories.
+fn read_brave_cookies(
+    profile: &BraveProfile,
+    domains: Vec<String>,
+) -> rookie::Result<Vec<Cookie>> {
+    // Brave's own config names the keyring entry ("Brave Safe Storage") that
+    // holds the decryption key. `rookie::any_browser` would try Chrome's entry
+    // first, which prompts for the wrong keychain item on macOS.
+    #[cfg(unix)]
+    {
+        chromium_based(
+            get_browser_config("brave"),
+            profile.cookies.clone(),
+            Some(domains),
+        )
+    }
+
+    // On Windows the key lives in the profile's own `Local State` file
+    #[cfg(windows)]
+    {
+        chromium_based(
+            profile.local_state.clone(),
+            profile.cookies.clone(),
+            Some(domains),
+        )
+    }
+}
+
+/// Fetch cookies for one Brave edition, reporting errors under `browser_name`
+fn fetch_brave_cookies(
+    edition: &BraveEdition,
+    browser_name: &'static str,
+    domains: Vec<String>,
+) -> Result<Vec<Cookie>, BrowserError> {
+    debug!("Attempting to fetch cookies from {} for domains: {:?}", browser_name, domains);
+
+    let Some(profile) = find_brave_profile(edition) else {
+        warn!("No {} profile found while fetching cookies for domains: {:?}", browser_name, domains);
+        return Err(BrowserError::BrowserNotAvailable {
+            browser: browser_name.to_string(),
+        });
+    };
+
+    match read_brave_cookies(&profile, domains.clone()) {
+        Ok(cookies) => {
+            info!("Successfully fetched {} cookies from {} for domains: {:?}",
+                  cookies.len(), browser_name, domains);
+            debug!("{} cookies: {:?}", browser_name, cookies.iter().map(|c| format!("{}={}", c.name, "[REDACTED]")).collect::<Vec<_>>());
+            Ok(cookies)
+        }
+        Err(e) => {
+            error!("Failed to fetch cookies from {} for domains {:?}: {}", browser_name, domains, e);
+            Err(BrowserError::cookie_fetch_error(browser_name, e))
+        }
+    }
+}
+
 /// Standard Brave Browser strategy implementation
 pub struct BraveStandardStrategy;
 
@@ -751,23 +881,11 @@ impl BraveStandardStrategy {
 
 impl BrowserStrategy for BraveStandardStrategy {
     fn fetch_cookies(&self, domains: Vec<String>) -> Result<Vec<Cookie>, BrowserError> {
-        debug!("Attempting to fetch cookies from Brave for domains: {:?}", domains);
-        match brave(Some(domains.clone())) {
-            Ok(cookies) => {
-                info!("Successfully fetched {} cookies from Brave for domains: {:?}",
-                      cookies.len(), domains);
-                debug!("Brave cookies: {:?}", cookies.iter().map(|c| format!("{}={}", c.name, "[REDACTED]")).collect::<Vec<_>>());
-                Ok(cookies)
-            }
-            Err(e) => {
-                error!("Failed to fetch cookies from Brave for domains {:?}: {}", domains, e);
-                Err(BrowserError::cookie_fetch_error("brave-standard", e))
-            }
-        }
+        fetch_brave_cookies(&BRAVE_STANDARD, "brave-standard", domains)
     }
 
     fn is_available(&self) -> bool {
-        let available = find_brave_profile(BRAVE_STANDARD_DIR).is_some();
+        let available = find_brave_profile(&BRAVE_STANDARD).is_some();
         debug!("Brave (standard) availability check: {}", available);
         available
     }
@@ -781,7 +899,7 @@ impl BrowserStrategy for BraveStandardStrategy {
 ///
 /// Brave Origin stores its profile under `BraveSoftware/Brave-Origin` rather
 /// than `BraveSoftware/Brave-Browser`, which the cookie library does not know
-/// about, so point it at the database directly.
+/// about.
 pub struct BraveOriginStrategy;
 
 impl BraveOriginStrategy {
@@ -792,38 +910,11 @@ impl BraveOriginStrategy {
 
 impl BrowserStrategy for BraveOriginStrategy {
     fn fetch_cookies(&self, domains: Vec<String>) -> Result<Vec<Cookie>, BrowserError> {
-        debug!("Attempting to fetch cookies from Brave Origin for domains: {:?}", domains);
-
-        let Some(profile) = find_brave_profile(BRAVE_ORIGIN_DIR) else {
-            warn!("No Brave Origin profile found while fetching cookies for domains: {:?}", domains);
-            return Err(BrowserError::BrowserNotAvailable {
-                browser: "brave-origin".to_string(),
-            });
-        };
-
-        let cookies_path = profile.cookies.to_string_lossy().to_string();
-        let local_state_path = profile.local_state.to_string_lossy().to_string();
-
-        match any_browser(
-            &cookies_path,
-            Some(domains.clone()),
-            Some(&local_state_path),
-        ) {
-            Ok(cookies) => {
-                info!("Successfully fetched {} cookies from Brave Origin for domains: {:?}",
-                      cookies.len(), domains);
-                debug!("Brave Origin cookies: {:?}", cookies.iter().map(|c| format!("{}={}", c.name, "[REDACTED]")).collect::<Vec<_>>());
-                Ok(cookies)
-            }
-            Err(e) => {
-                error!("Failed to fetch cookies from Brave Origin for domains {:?}: {}", domains, e);
-                Err(BrowserError::cookie_fetch_error("brave-origin", e))
-            }
-        }
+        fetch_brave_cookies(&BRAVE_ORIGIN, "brave-origin", domains)
     }
 
     fn is_available(&self) -> bool {
-        let available = find_brave_profile(BRAVE_ORIGIN_DIR).is_some();
+        let available = find_brave_profile(&BRAVE_ORIGIN).is_some();
         debug!("Brave Origin availability check: {}", available);
         available
     }
@@ -1010,6 +1101,29 @@ impl CookieManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Match a browser name reported by a strategy against the type it came from.
+    ///
+    /// `brave` resolves to whichever edition is installed, so it answers to the
+    /// names of both editions as well as its own. The tests need this because
+    /// they cannot assume which browsers a given machine has installed.
+    trait ReportsAs {
+        fn reports_as(&self, browser_name: &str) -> bool;
+    }
+
+    impl ReportsAs for BrowserType {
+        fn reports_as(&self, browser_name: &str) -> bool {
+            match self {
+                BrowserType::Brave => [
+                    BrowserType::Brave.as_str(),
+                    BrowserType::BraveStandard.as_str(),
+                    BrowserType::BraveOrigin.as_str(),
+                ]
+                .contains(&browser_name),
+                other => other.as_str() == browser_name,
+            }
+        }
+    }
 
     #[test]
     fn test_browser_type_from_str_valid() {
@@ -1637,15 +1751,100 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_brave_profile_roots_cover_each_platform() {
-        let roots = brave_profile_roots("Brave-Origin");
+    /// A throwaway directory to build fake Brave profile trees in
+    struct ScratchDir {
+        path: PathBuf,
+    }
 
-        // Every candidate must name the edition's directory
-        assert!(!roots.is_empty());
-        for root in &roots {
-            assert!(root.to_string_lossy().contains("Brave-Origin"));
+    impl ScratchDir {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!("rustdl-{}-{}", name, std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).expect("could not create scratch directory");
+            Self { path }
         }
+
+        /// Create an empty file, and every directory leading to it
+        fn touch(&self, relative: &str) -> PathBuf {
+            let path = self.path.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).expect("could not create directory");
+            std::fs::write(&path, b"").expect("could not create file");
+            path
+        }
+    }
+
+    impl Drop for ScratchDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn test_find_brave_profile_in_finds_default_profile() {
+        let scratch = ScratchDir::new("brave-default");
+        let cookies = scratch.touch("Default/Cookies");
+        scratch.touch("Local State");
+
+        let profile = find_brave_profile_in(&scratch.path).expect("profile should be found");
+        assert_eq!(profile.cookies, cookies);
+        assert_eq!(profile.local_state, scratch.path.join("Local State"));
+    }
+
+    #[test]
+    fn test_find_brave_profile_in_prefers_network_subdirectory() {
+        // Newer Chromium releases keep the live database under Network/ and
+        // may leave a stale one behind at the old location
+        let scratch = ScratchDir::new("brave-network");
+        scratch.touch("Default/Cookies");
+        let network_cookies = scratch.touch("Default/Network/Cookies");
+
+        let profile = find_brave_profile_in(&scratch.path).expect("profile should be found");
+        assert_eq!(profile.cookies, network_cookies);
+    }
+
+    #[test]
+    fn test_find_brave_profile_in_falls_back_to_numbered_profiles() {
+        // A user whose only profile is 'Profile 1' still has cookies to read
+        let scratch = ScratchDir::new("brave-numbered");
+        std::fs::create_dir_all(scratch.path.join("Default")).unwrap();
+        let cookies = scratch.touch("Profile 1/Cookies");
+
+        let profile = find_brave_profile_in(&scratch.path).expect("profile should be found");
+        assert_eq!(profile.cookies, cookies);
+    }
+
+    #[test]
+    fn test_find_brave_profile_in_prefers_default_over_numbered_profiles() {
+        let scratch = ScratchDir::new("brave-default-wins");
+        let default_cookies = scratch.touch("Default/Cookies");
+        scratch.touch("Profile 1/Cookies");
+
+        let profile = find_brave_profile_in(&scratch.path).expect("profile should be found");
+        assert_eq!(profile.cookies, default_cookies);
+    }
+
+    #[test]
+    fn test_find_brave_profile_in_ignores_a_root_without_cookies() {
+        let scratch = ScratchDir::new("brave-empty");
+        scratch.touch("Default/Preferences");
+        scratch.touch("NativeMessagingHosts/example.json");
+
+        assert!(find_brave_profile_in(&scratch.path).is_none());
+    }
+
+    #[test]
+    fn test_find_brave_profile_in_ignores_a_cookie_directory() {
+        // Only a file is a database; a directory of that name is not
+        let scratch = ScratchDir::new("brave-cookie-dir");
+        std::fs::create_dir_all(scratch.path.join("Default").join("Cookies")).unwrap();
+
+        assert!(find_brave_profile_in(&scratch.path).is_none());
+    }
+
+    #[test]
+    fn test_brave_profile_roots_cover_every_channel() {
+        let roots = brave_profile_roots(&BRAVE_STANDARD);
+        assert!(!roots.is_empty());
 
         let joined = roots
             .iter()
@@ -1653,18 +1852,47 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(joined.contains(".config/BraveSoftware/Brave-Origin"));
-        assert!(joined.contains("Application Support/BraveSoftware/Brave-Origin"));
-        assert!(joined.contains("BraveSoftware/Brave-Origin/User Data"));
+        // Every channel Brave installs alongside the stable release
+        for channel in ["-Beta", "-Development", "-Nightly"] {
+            assert!(
+                joined.contains(&format!("Brave-Browser{}", channel)),
+                "no root for the {} channel in:\n{}",
+                channel,
+                joined
+            );
+        }
+
+        // Stable is checked first, so an everyday install always wins
+        assert!(
+            roots[0].ends_with("Brave-Browser") || roots[0].ends_with("Brave-Browser/User Data"),
+            "stable should be checked first, got {}",
+            roots[0].display()
+        );
     }
 
     #[test]
     fn test_brave_editions_use_separate_directories() {
-        let standard = brave_profile_roots(BRAVE_STANDARD_DIR);
-        let origin = brave_profile_roots(BRAVE_ORIGIN_DIR);
+        let standard = brave_profile_roots(&BRAVE_STANDARD);
+        let origin = brave_profile_roots(&BRAVE_ORIGIN);
+
+        assert!(!standard.is_empty());
+        assert!(!origin.is_empty());
 
         for root in &standard {
             assert!(!origin.contains(root));
+        }
+    }
+
+    #[test]
+    fn test_brave_origin_has_no_flatpak_or_snap_roots() {
+        // Brave Origin ships only as a native package, so those paths would
+        // never match anything
+        let roots = brave_profile_roots(&BRAVE_ORIGIN);
+
+        for root in &roots {
+            let root = root.to_string_lossy();
+            assert!(!root.contains(".var/app"), "unexpected flatpak root: {}", root);
+            assert!(!root.contains("/snap/"), "unexpected snap root: {}", root);
         }
     }
 

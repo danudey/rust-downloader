@@ -27,6 +27,11 @@ Brave ships in two editions which keep their profiles in separate directories, s
 | `brave-origin` | The Brave Origin edition |
 | `brave` | Whichever of the two is installed, preferring the standard release |
 
+For both editions the stable channel is searched first, then the Beta,
+Development and Nightly channels; within an install the `Default` profile is
+used, falling back to the numbered profiles if there is no `Default`. The
+standard release is also found when it was installed as a Flatpak or a snap.
+
 Currently there's no way to do the following (yet):
 
 1. Specify a different browser as default
