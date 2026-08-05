@@ -12,7 +12,21 @@ name: release-please
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           release-type: rust
+
+  publish-binaries:
+    # tag_name is only set on the run that actually cuts a release, i.e. the
+    # push that merged the release PR.
+    needs: release-please
+    if: needs.release-please.outputs.tag_name != ''
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-binaries.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}

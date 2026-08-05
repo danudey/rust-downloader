@@ -1,0 +1,155 @@
+name: Release binaries
+
+# Builds `download` for the common desktop platforms and attaches the archives
+# to a GitHub release.
+#
+# This is called by release-please.yml once a release PR is merged and the
+# release has been cut. It deliberately is *not* triggered by `on: release`:
+# releases created with GITHUB_TOKEN do not raise events that start new workflow
+# runs, so such a workflow would never fire.
+#
+# Run it manually (workflow_dispatch) with an empty tag to build every target
+# without touching a release.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to build and attach binaries to.
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to attach binaries to. Leave empty for a build-only dry run.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Applied to the `release` profile without editing Cargo.toml.
+  CARGO_PROFILE_RELEASE_LTO: "true"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+  CARGO_PROFILE_RELEASE_STRIP: symbols
+  # musl-tools installs musl-gcc, which targets the runner's own architecture.
+  # Each Linux build therefore compiles natively rather than cross-compiling,
+  # which matters because aws-lc-sys and libsqlite3-sys both build C code.
+  CC_x86_64_unknown_linux_musl: musl-gcc
+  CC_aarch64_unknown_linux_musl: musl-gcc
+  CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+  CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux uses musl so the binaries are static and run on any
+          # distribution regardless of its glibc version.
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Install musl toolchain
+        if: endsWith(matrix.target, '-linux-musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Install NASM
+        # aws-lc-sys assembles its x86_64 crypto with NASM, which the Windows
+        # runner image does not ship. The ARM64 Windows build does not need it.
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          choco install nasm --no-progress -y
+          "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package
+        id: package
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+
+          version="${TAG:-$(git rev-parse --short HEAD)}"
+          stage="download-${version}-${TARGET}"
+          mkdir "$stage"
+          cp README.md LICENSE "$stage/"
+
+          case "$TARGET" in
+            *windows*)
+              cp "target/${TARGET}/release/download.exe" "$stage/"
+              archive="${stage}.zip"
+              pwsh -Command "Compress-Archive -Path '$stage' -DestinationPath '$archive'"
+              ;;
+            *)
+              cp "target/${TARGET}/release/download" "$stage/"
+              archive="${stage}.tar.gz"
+              tar -czf "$archive" "$stage"
+              ;;
+          esac
+
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$archive" > "${archive}.sha256"
+          else
+            shasum -a 256 "$archive" > "${archive}.sha256"
+          fi
+
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.archive }}.sha256
+          if-no-files-found: error
+
+  upload:
+    name: Attach to release
+    needs: build
+    if: inputs.tag != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Upload archives to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: gh release upload "$TAG" artifacts/* --clobber
