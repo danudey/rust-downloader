@@ -1,15 +1,13 @@
 use std::process::Command;
-use std::env;
 use std::path::PathBuf;
 
-// Helper function to get the path to the compiled binary
+// Helper function to get the path to the compiled binary.
+//
+// Cargo hands integration tests the real path to each `[[bin]]` target, so ask
+// it rather than guessing from the test executable's own location: the two are
+// not siblings once `build.build-dir` or the build-dir layout changes.
 fn get_binary_path() -> PathBuf {
-    let mut path = env::current_exe().unwrap();
-    path.pop(); // Remove test executable name
-    if path.ends_with("deps") {
-        path.pop(); // Remove deps directory
-    }
-    path.join("download")
+    PathBuf::from(env!("CARGO_BIN_EXE_download"))
 }
 
 // Helper function to run the download command with arguments
