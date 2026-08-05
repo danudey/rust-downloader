@@ -24,6 +24,14 @@ fn run_download_command(args: &[&str]) -> std::process::Output {
 mod integration_tests {
     use super::*;
 
+    /// A URL that parses but can never resolve.
+    ///
+    /// Browser selection happens before the request is attempted, so passing a
+    /// URL exercises the whole selection path without touching the network.
+    /// `--help` cannot be used for this: clap prints the help text and exits
+    /// during argument parsing, before any browser is looked at.
+    const UNREACHABLE_URL: &str = "https://downloader-test.invalid/file";
+
     #[test]
     fn test_end_to_end_browser_selection_chrome() {
         // Test complete workflow from CLI argument to cookie usage with Chrome
@@ -65,6 +73,20 @@ mod integration_tests {
     }
 
     #[test]
+    fn test_end_to_end_browser_selection_brave() {
+        // Test complete workflow from CLI argument to cookie usage with each
+        // way of asking for Brave
+        for browser in &["brave", "brave-standard", "brave-origin"] {
+            let output = run_download_command(&["--browser", browser, UNREACHABLE_URL]);
+
+            // Should not fail with invalid browser error
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(!stderr.contains("not supported"),
+                    "Browser '{}' should be supported but got error: {}", browser, stderr);
+        }
+    }
+
+    #[test]
     fn test_end_to_end_invalid_browser_error() {
         // Test error handling for invalid browser selection
         let output = run_download_command(&["--browser", "invalid", "http://example.com"]);
@@ -88,11 +110,14 @@ mod integration_tests {
             ("firefox", true),
             ("safari", true),
             ("edge", true),
+            ("BRAVE", true),
+            ("Brave-Origin", true),
+            ("brave-standard", true),
         ];
 
         for (browser_name, should_succeed) in test_cases {
-            let output = run_download_command(&["--browser", browser_name, "--help"]);
-            
+            let output = run_download_command(&["--browser", browser_name, UNREACHABLE_URL]);
+
             if should_succeed {
                 // Should not fail with invalid browser error
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -119,16 +144,20 @@ mod integration_tests {
     fn test_end_to_end_browser_availability_scenarios() {
         // Test different browser availability scenarios
         // This test checks that the application handles browser availability gracefully
-        
-        for browser in &["chrome", "firefox", "safari", "edge"] {
-            let output = run_download_command(&["--browser", browser, "--help"]);
-            
-            // The help command should always work, regardless of browser availability
-            // If browser is not available, it should be handled gracefully
+
+        for browser in &["chrome", "firefox", "safari", "edge", "brave", "brave-standard", "brave-origin"] {
+            let output = run_download_command(&["--browser", browser, UNREACHABLE_URL]);
+
             let stderr = String::from_utf8_lossy(&output.stderr);
-            
+
             // Should not crash or produce unexpected errors
-            assert!(!stderr.contains("panic") && !stderr.contains("thread panicked"));
+            assert!(!stderr.contains("panic") && !stderr.contains("thread panicked"),
+                    "Browser '{}' crashed the command: {}", browser, stderr);
+
+            // Every one of these is a browser we support, so selecting it must
+            // never be rejected: an absent browser falls back to auto-detection
+            assert!(!stderr.contains("not supported"),
+                    "Browser '{}' should be supported but got error: {}", browser, stderr);
         }
     }
 

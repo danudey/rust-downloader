@@ -17,6 +17,21 @@ The binary for `rustdl` is called `download`.
 
 Currently, `rustdl` supports pulling cookies from several browsers, most notably Firefox and any Chromium variant it can find. Because I'm lazy I've hard-coded `firefox` as the default option because that's what I use. You can pass `--browser` to the tool to tell it which browser to try to fetch cookies from; Safari and Edge are sadly untested at this point in time.
 
+The accepted values are `chrome`, `chromium`, `firefox`, `safari`, `edge`, `brave`, `brave-standard` and `brave-origin`.
+
+Brave ships in two editions which keep their profiles in separate directories, so they're selected separately:
+
+| Value | Browser |
+| --- | --- |
+| `brave-standard` | The standard Brave Browser release |
+| `brave-origin` | The Brave Origin edition |
+| `brave` | Whichever of the two is installed, preferring the standard release |
+
+For both editions the stable channel is searched first, then the Beta,
+Development and Nightly channels; within an install the `Default` profile is
+used, falling back to the numbered profiles if there is no `Default`. The
+standard release is also found when it was installed as a Flatpak or a snap.
+
 Currently there's no way to do the following (yet):
 
 1. Specify a different browser as default
