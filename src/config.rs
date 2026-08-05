@@ -106,11 +106,10 @@ impl AppConfig {
     }
 
     pub fn cookies_enabled_for_domain(&self, domain: &str) -> bool {
-        if let Some(domain_config) = self.domains.get(domain) {
-            if let Some(cookies) = domain_config.cookies {
+        if let Some(domain_config) = self.domains.get(domain)
+            && let Some(cookies) = domain_config.cookies {
                 return cookies;
             }
-        }
         self.defaults.cookies
     }
 
@@ -121,11 +120,10 @@ impl AppConfig {
     }
 
     pub fn browser_for_domain(&self, domain: &str) -> Option<&str> {
-        if let Some(domain_config) = self.domains.get(domain) {
-            if domain_config.browser.is_some() {
+        if let Some(domain_config) = self.domains.get(domain)
+            && domain_config.browser.is_some() {
                 return domain_config.browser.as_deref();
             }
-        }
         self.defaults.browser.as_deref()
     }
 }
