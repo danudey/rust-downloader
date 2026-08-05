@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/danudey/rust-downloader/compare/v0.4.0...v0.5.0) (2026-08-05)
+
+
+### Features
+
+* **browser:** Add support for cookies from Brave ([#21](https://github.com/danudey/rust-downloader/issues/21)) ([bd6cb1b](https://github.com/danudey/rust-downloader/commit/bd6cb1bf05b50230055d6bdd23bde2dbee942d04))
+
+
+### Bug Fixes
+
+* **tests:** locate binary via CARGO_BIN_EXE instead of current_exe ([#22](https://github.com/danudey/rust-downloader/issues/22)) ([94c0f4b](https://github.com/danudey/rust-downloader/commit/94c0f4b8e2e1f5507dbe558da2f853ab3938b1c8))
+* **tests:** use isolated configuration for testing ([#24](https://github.com/danudey/rust-downloader/issues/24)) ([d688c7c](https://github.com/danudey/rust-downloader/commit/d688c7c20b9aa30f89b296313b26056f44f7d386))
+
 ## [0.4.0](https://github.com/danudey/rust-downloader/compare/v0.3.0...v0.4.0) (2026-03-03)
 
 
