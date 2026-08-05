@@ -41,7 +41,8 @@ struct Cli {
     #[arg(required_unless_present = "init_config")]
     urls: Vec<String>,
 
-    /// Browser to use for cookies (chrome, firefox, safari, edge)
+    /// Browser to use for cookies (chrome, chromium, firefox, safari, edge,
+    /// brave, brave-standard, brave-origin)
     #[arg(long, short, value_name = "BROWSER")]
     browser: Option<String>,
 
@@ -386,6 +387,21 @@ mod tests {
         let result = validate_browser_argument(Some("edge".to_string()));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Some(BrowserType::Edge));
+    }
+
+    #[test]
+    fn test_validate_browser_argument_brave() {
+        let result = validate_browser_argument(Some("brave".to_string()));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some(BrowserType::Brave));
+
+        let result = validate_browser_argument(Some("brave-standard".to_string()));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some(BrowserType::BraveStandard));
+
+        let result = validate_browser_argument(Some("brave-origin".to_string()));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Some(BrowserType::BraveOrigin));
     }
 
     #[test]

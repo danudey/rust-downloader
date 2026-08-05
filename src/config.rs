@@ -10,7 +10,10 @@ pub const EXAMPLE_CONFIG: &str = r#"# rustdl configuration file
 
 [defaults]
 # Default browser for cookie fetching.
-# Supported values: chrome, chromium, firefox, safari, edge
+# Supported values: chrome, chromium, firefox, safari, edge,
+#                   brave, brave-standard, brave-origin
+# Use "brave" to pick whichever Brave edition is installed, or name an edition
+# directly with "brave-standard" (the normal release) or "brave-origin".
 # Leave commented out to auto-detect.
 # browser = "firefox"
 

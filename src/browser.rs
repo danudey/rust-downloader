@@ -1,6 +1,7 @@
 use rookie::common::enums::Cookie;
-use rookie::{chrome, chromium, edge, firefox};
+use rookie::{any_browser, brave, chrome, chromium, edge, firefox};
 use std::fmt;
+use std::path::PathBuf;
 use std::str::FromStr;
 use log::{debug, info, warn, error};
 
@@ -27,6 +28,12 @@ pub enum BrowserType {
     Firefox,
     Safari,
     Edge,
+    /// Brave, either edition, whichever is installed
+    Brave,
+    /// The standard Brave Browser release
+    BraveStandard,
+    /// The Brave Origin edition, which keeps its profile in a separate directory
+    BraveOrigin,
 }
 
 impl BrowserType {
@@ -35,6 +42,25 @@ impl BrowserType {
         vec![
             BrowserType::Chrome,
             BrowserType::Chromium,
+            BrowserType::Firefox,
+            BrowserType::Safari,
+            BrowserType::Edge,
+            BrowserType::Brave,
+            BrowserType::BraveStandard,
+            BrowserType::BraveOrigin,
+        ]
+    }
+
+    /// Get the browser types to check when auto-detecting, in priority order.
+    ///
+    /// This deliberately lists the two Brave editions rather than the `brave`
+    /// alias, so a detected browser always names the edition it came from.
+    pub fn detection_priority() -> Vec<BrowserType> {
+        vec![
+            BrowserType::Chrome,
+            BrowserType::Chromium,
+            BrowserType::BraveStandard,
+            BrowserType::BraveOrigin,
             BrowserType::Firefox,
             BrowserType::Safari,
             BrowserType::Edge,
@@ -49,6 +75,41 @@ impl BrowserType {
             BrowserType::Firefox => "firefox",
             BrowserType::Safari => "safari",
             BrowserType::Edge => "edge",
+            BrowserType::Brave => "brave",
+            BrowserType::BraveStandard => "brave-standard",
+            BrowserType::BraveOrigin => "brave-origin",
+        }
+    }
+
+    /// Build the cookie-fetching strategy for this browser type
+    pub fn strategy(&self) -> Box<dyn BrowserStrategy> {
+        match self {
+            BrowserType::Chrome => Box::new(ChromeStrategy::new()),
+            BrowserType::Chromium => Box::new(ChromiumStrategy::new()),
+            BrowserType::Firefox => Box::new(FirefoxStrategy::new()),
+            BrowserType::Safari => Box::new(SafariStrategy::new()),
+            BrowserType::Edge => Box::new(EdgeStrategy::new()),
+            BrowserType::Brave => Box::new(BraveStrategy::new()),
+            BrowserType::BraveStandard => Box::new(BraveStandardStrategy::new()),
+            BrowserType::BraveOrigin => Box::new(BraveOriginStrategy::new()),
+        }
+    }
+
+    /// Check whether a browser name reported by a strategy came from this browser type.
+    ///
+    /// `brave` resolves to whichever edition is installed, so it answers to the
+    /// names of both editions as well as its own. (Used by the tests, which
+    /// cannot assume which browsers a given machine has installed.)
+    #[cfg(test)]
+    pub fn reports_as(&self, browser_name: &str) -> bool {
+        match self {
+            BrowserType::Brave => [
+                BrowserType::Brave.as_str(),
+                BrowserType::BraveStandard.as_str(),
+                BrowserType::BraveOrigin.as_str(),
+            ]
+            .contains(&browser_name),
+            other => other.as_str() == browser_name,
         }
     }
 }
@@ -69,6 +130,11 @@ impl FromStr for BrowserType {
             "firefox" => Ok(BrowserType::Firefox),
             "safari" => Ok(BrowserType::Safari),
             "edge" => Ok(BrowserType::Edge),
+            "brave" => Ok(BrowserType::Brave),
+            "brave-standard" | "brave_standard" | "brave-browser" | "brave_browser" => {
+                Ok(BrowserType::BraveStandard)
+            }
+            "brave-origin" | "brave_origin" => Ok(BrowserType::BraveOrigin),
             _ => Err(BrowserError::UnsupportedBrowser { browser: s.to_string()}),
         }
     }
@@ -586,6 +652,241 @@ impl BrowserStrategy for EdgeStrategy {
     }
 }
 
+/// The directory Brave's standard release keeps its profiles in
+const BRAVE_STANDARD_DIR: &str = "Brave-Browser";
+
+/// The directory the Brave Origin edition keeps its profiles in
+const BRAVE_ORIGIN_DIR: &str = "Brave-Origin";
+
+/// A located Brave profile directory and the files needed to read its cookies
+struct BraveProfile {
+    /// The cookie database itself
+    cookies: PathBuf,
+    /// The `Local State` file holding the encryption key (needed on Windows)
+    local_state: PathBuf,
+}
+
+/// Every directory a Brave edition might keep its profiles in.
+///
+/// Brave's editions differ only by the directory name under `BraveSoftware`,
+/// e.g. `Brave-Browser` for the standard release and `Brave-Origin` for Brave
+/// Origin, so all of them can share this lookup.
+fn brave_profile_roots(product_dir: &str) -> Vec<PathBuf> {
+    let Some(home_dir) = dirs::home_dir() else {
+        return Vec::new();
+    };
+
+    let mut roots = vec![
+        // Linux
+        home_dir
+            .join(".config")
+            .join("BraveSoftware")
+            .join(product_dir),
+        // Linux, Flatpak
+        home_dir
+            .join(".var")
+            .join("app")
+            .join("com.brave.Browser")
+            .join("config")
+            .join("BraveSoftware")
+            .join(product_dir),
+        // macOS
+        home_dir
+            .join("Library")
+            .join("Application Support")
+            .join("BraveSoftware")
+            .join(product_dir),
+        // Windows
+        home_dir
+            .join("AppData")
+            .join("Local")
+            .join("BraveSoftware")
+            .join(product_dir)
+            .join("User Data"),
+    ];
+
+    // Linux, snap: the revision number is part of the path, so enumerate them
+    if let Ok(revisions) = std::fs::read_dir(home_dir.join("snap").join("brave")) {
+        roots.extend(revisions.flatten().map(|revision| {
+            revision
+                .path()
+                .join(".config")
+                .join("BraveSoftware")
+                .join(product_dir)
+        }));
+    }
+
+    roots
+}
+
+/// Find the profile of an installed Brave edition, if there is one
+fn find_brave_profile(product_dir: &str) -> Option<BraveProfile> {
+    for root in brave_profile_roots(product_dir) {
+        // Newer Chromium releases moved the cookie database under Network/
+        let candidates = [
+            root.join("Default").join("Network").join("Cookies"),
+            root.join("Default").join("Cookies"),
+        ];
+
+        if let Some(cookies) = candidates.into_iter().find(|path| path.is_file()) {
+            debug!("Found Brave cookie database at {}", cookies.display());
+            return Some(BraveProfile {
+                cookies,
+                local_state: root.join("Local State"),
+            });
+        }
+    }
+
+    None
+}
+
+/// Standard Brave Browser strategy implementation
+pub struct BraveStandardStrategy;
+
+impl BraveStandardStrategy {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl BrowserStrategy for BraveStandardStrategy {
+    fn fetch_cookies(&self, domains: Vec<String>) -> Result<Vec<Cookie>, BrowserError> {
+        debug!("Attempting to fetch cookies from Brave for domains: {:?}", domains);
+        match brave(Some(domains.clone())) {
+            Ok(cookies) => {
+                info!("Successfully fetched {} cookies from Brave for domains: {:?}",
+                      cookies.len(), domains);
+                debug!("Brave cookies: {:?}", cookies.iter().map(|c| format!("{}={}", c.name, "[REDACTED]")).collect::<Vec<_>>());
+                Ok(cookies)
+            }
+            Err(e) => {
+                error!("Failed to fetch cookies from Brave for domains {:?}: {}", domains, e);
+                Err(BrowserError::cookie_fetch_error("brave-standard", e))
+            }
+        }
+    }
+
+    fn is_available(&self) -> bool {
+        let available = find_brave_profile(BRAVE_STANDARD_DIR).is_some();
+        debug!("Brave (standard) availability check: {}", available);
+        available
+    }
+
+    fn browser_name(&self) -> &'static str {
+        "brave-standard"
+    }
+}
+
+/// Brave Origin strategy implementation
+///
+/// Brave Origin stores its profile under `BraveSoftware/Brave-Origin` rather
+/// than `BraveSoftware/Brave-Browser`, which the cookie library does not know
+/// about, so point it at the database directly.
+pub struct BraveOriginStrategy;
+
+impl BraveOriginStrategy {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl BrowserStrategy for BraveOriginStrategy {
+    fn fetch_cookies(&self, domains: Vec<String>) -> Result<Vec<Cookie>, BrowserError> {
+        debug!("Attempting to fetch cookies from Brave Origin for domains: {:?}", domains);
+
+        let Some(profile) = find_brave_profile(BRAVE_ORIGIN_DIR) else {
+            warn!("No Brave Origin profile found while fetching cookies for domains: {:?}", domains);
+            return Err(BrowserError::BrowserNotAvailable {
+                browser: "brave-origin".to_string(),
+            });
+        };
+
+        let cookies_path = profile.cookies.to_string_lossy().to_string();
+        let local_state_path = profile.local_state.to_string_lossy().to_string();
+
+        match any_browser(
+            &cookies_path,
+            Some(domains.clone()),
+            Some(&local_state_path),
+        ) {
+            Ok(cookies) => {
+                info!("Successfully fetched {} cookies from Brave Origin for domains: {:?}",
+                      cookies.len(), domains);
+                debug!("Brave Origin cookies: {:?}", cookies.iter().map(|c| format!("{}={}", c.name, "[REDACTED]")).collect::<Vec<_>>());
+                Ok(cookies)
+            }
+            Err(e) => {
+                error!("Failed to fetch cookies from Brave Origin for domains {:?}: {}", domains, e);
+                Err(BrowserError::cookie_fetch_error("brave-origin", e))
+            }
+        }
+    }
+
+    fn is_available(&self) -> bool {
+        let available = find_brave_profile(BRAVE_ORIGIN_DIR).is_some();
+        debug!("Brave Origin availability check: {}", available);
+        available
+    }
+
+    fn browser_name(&self) -> &'static str {
+        "brave-origin"
+    }
+}
+
+/// Brave strategy that picks whichever edition is installed
+///
+/// The standard release wins if both are present.
+pub struct BraveStrategy {
+    edition: Option<Box<dyn BrowserStrategy>>,
+}
+
+impl BraveStrategy {
+    pub fn new() -> Self {
+        let standard = BraveStandardStrategy::new();
+        let origin = BraveOriginStrategy::new();
+
+        let edition: Option<Box<dyn BrowserStrategy>> = if standard.is_available() {
+            Some(Box::new(standard))
+        } else if origin.is_available() {
+            Some(Box::new(origin))
+        } else {
+            None
+        };
+
+        match &edition {
+            Some(strategy) => info!("Brave edition detected: {}", strategy.browser_name()),
+            None => debug!("No Brave edition detected"),
+        }
+
+        Self { edition }
+    }
+}
+
+impl BrowserStrategy for BraveStrategy {
+    fn fetch_cookies(&self, domains: Vec<String>) -> Result<Vec<Cookie>, BrowserError> {
+        match &self.edition {
+            Some(strategy) => strategy.fetch_cookies(domains),
+            None => {
+                warn!("Brave cookie fetch attempted with no Brave edition installed");
+                Err(BrowserError::BrowserNotAvailable {
+                    browser: "brave".to_string(),
+                })
+            }
+        }
+    }
+
+    fn is_available(&self) -> bool {
+        self.edition.is_some()
+    }
+
+    fn browser_name(&self) -> &'static str {
+        match &self.edition {
+            Some(strategy) => strategy.browser_name(),
+            None => "brave",
+        }
+    }
+}
+
 /// Cookie manager that uses the strategy pattern for browser selection
 pub struct CookieManager {
     strategy: Box<dyn BrowserStrategy>,
@@ -596,13 +897,7 @@ impl CookieManager {
     pub fn new(browser_type: BrowserType) -> Result<Self, BrowserError> {
         debug!("Creating CookieManager with explicit browser selection: {}", browser_type);
         
-        let strategy: Box<dyn BrowserStrategy> = match browser_type {
-            BrowserType::Chrome => Box::new(ChromeStrategy::new()),
-            BrowserType::Chromium => Box::new(ChromiumStrategy::new()),
-            BrowserType::Firefox => Box::new(FirefoxStrategy::new()),
-            BrowserType::Safari => Box::new(SafariStrategy::new()),
-            BrowserType::Edge => Box::new(EdgeStrategy::new()),
-        };
+        let strategy = browser_type.strategy();
 
         // Check if the selected browser is available
         if !strategy.is_available() {
@@ -635,30 +930,16 @@ impl CookieManager {
         Self::new(browser_type)
     }
 
-    /// Detect all available browsers in priority order (Chrome, Firefox, Safari, Edge)
+    /// Detect all available browsers in priority order (see `BrowserType::detection_priority`)
     pub fn detect_available_browsers() -> Vec<BrowserType> {
         debug!("Starting browser detection process");
-        let browser_priority = [
-            BrowserType::Chrome,
-            BrowserType::Chromium,
-            BrowserType::Firefox,
-            BrowserType::Safari,
-            BrowserType::Edge,
-        ];
 
         let mut available_browsers = Vec::new();
 
-        for browser_type in &browser_priority {
+        for browser_type in BrowserType::detection_priority() {
             debug!("Checking availability of {}", browser_type);
-            let strategy: Box<dyn BrowserStrategy> = match browser_type {
-                BrowserType::Chrome => Box::new(ChromeStrategy::new()),
-                BrowserType::Chromium => Box::new(ChromiumStrategy::new()),
-                BrowserType::Firefox => Box::new(FirefoxStrategy::new()),
-                BrowserType::Safari => Box::new(SafariStrategy::new()),
-                BrowserType::Edge => Box::new(EdgeStrategy::new()),
-            };
 
-            if strategy.is_available() {
+            if browser_type.strategy().is_available() {
                 debug!("Browser {} is available", browser_type);
                 available_browsers.push(browser_type.clone());
             } else {
@@ -749,6 +1030,48 @@ mod tests {
             BrowserType::Safari
         );
         assert_eq!("edge".parse::<BrowserType>().unwrap(), BrowserType::Edge);
+        assert_eq!("brave".parse::<BrowserType>().unwrap(), BrowserType::Brave);
+        assert_eq!(
+            "brave-standard".parse::<BrowserType>().unwrap(),
+            BrowserType::BraveStandard
+        );
+        assert_eq!(
+            "brave-origin".parse::<BrowserType>().unwrap(),
+            BrowserType::BraveOrigin
+        );
+    }
+
+    #[test]
+    fn test_browser_type_from_str_brave_aliases() {
+        for alias in ["brave_standard", "brave-browser", "brave_browser"] {
+            assert_eq!(
+                alias.parse::<BrowserType>().unwrap(),
+                BrowserType::BraveStandard,
+                "alias {} should parse as the standard Brave release",
+                alias
+            );
+        }
+
+        assert_eq!(
+            "brave_origin".parse::<BrowserType>().unwrap(),
+            BrowserType::BraveOrigin
+        );
+    }
+
+    #[test]
+    fn test_brave_reports_as_either_edition() {
+        // 'brave' resolves to whichever edition is installed
+        assert!(BrowserType::Brave.reports_as("brave"));
+        assert!(BrowserType::Brave.reports_as("brave-standard"));
+        assert!(BrowserType::Brave.reports_as("brave-origin"));
+        assert!(!BrowserType::Brave.reports_as("chrome"));
+
+        // The specific editions only answer to their own name
+        assert!(BrowserType::BraveStandard.reports_as("brave-standard"));
+        assert!(!BrowserType::BraveStandard.reports_as("brave-origin"));
+        assert!(!BrowserType::BraveStandard.reports_as("brave"));
+        assert!(BrowserType::BraveOrigin.reports_as("brave-origin"));
+        assert!(!BrowserType::BraveOrigin.reports_as("brave-standard"));
     }
 
     #[test]
@@ -766,6 +1089,15 @@ mod tests {
             BrowserType::Safari
         );
         assert_eq!("Edge".parse::<BrowserType>().unwrap(), BrowserType::Edge);
+        assert_eq!("BRAVE".parse::<BrowserType>().unwrap(), BrowserType::Brave);
+        assert_eq!(
+            "Brave-Origin".parse::<BrowserType>().unwrap(),
+            BrowserType::BraveOrigin
+        );
+        assert_eq!(
+            "Brave-Standard".parse::<BrowserType>().unwrap(),
+            BrowserType::BraveStandard
+        );
     }
 
     #[test]
@@ -787,6 +1119,9 @@ mod tests {
         assert_eq!(BrowserType::Firefox.to_string(), "firefox");
         assert_eq!(BrowserType::Safari.to_string(), "safari");
         assert_eq!(BrowserType::Edge.to_string(), "edge");
+        assert_eq!(BrowserType::Brave.to_string(), "brave");
+        assert_eq!(BrowserType::BraveStandard.to_string(), "brave-standard");
+        assert_eq!(BrowserType::BraveOrigin.to_string(), "brave-origin");
     }
 
     #[test]
@@ -796,17 +1131,38 @@ mod tests {
         assert_eq!(BrowserType::Firefox.as_str(), "firefox");
         assert_eq!(BrowserType::Safari.as_str(), "safari");
         assert_eq!(BrowserType::Edge.as_str(), "edge");
+        assert_eq!(BrowserType::Brave.as_str(), "brave");
+        assert_eq!(BrowserType::BraveStandard.as_str(), "brave-standard");
+        assert_eq!(BrowserType::BraveOrigin.as_str(), "brave-origin");
     }
 
     #[test]
     fn test_browser_type_all() {
         let all_browsers = BrowserType::all();
-        assert_eq!(all_browsers.len(), 5);
+        assert_eq!(all_browsers.len(), 8);
         assert!(all_browsers.contains(&BrowserType::Chrome));
         assert!(all_browsers.contains(&BrowserType::Chromium));
         assert!(all_browsers.contains(&BrowserType::Firefox));
         assert!(all_browsers.contains(&BrowserType::Safari));
         assert!(all_browsers.contains(&BrowserType::Edge));
+        assert!(all_browsers.contains(&BrowserType::Brave));
+        assert!(all_browsers.contains(&BrowserType::BraveStandard));
+        assert!(all_browsers.contains(&BrowserType::BraveOrigin));
+    }
+
+    #[test]
+    fn test_browser_type_detection_priority_excludes_brave_alias() {
+        let priority = BrowserType::detection_priority();
+
+        // Detection reports the edition it found, so the alias never appears
+        assert!(!priority.contains(&BrowserType::Brave));
+        assert!(priority.contains(&BrowserType::BraveStandard));
+        assert!(priority.contains(&BrowserType::BraveOrigin));
+
+        // Everything it does list must be a supported browser
+        for browser_type in &priority {
+            assert!(BrowserType::all().contains(browser_type));
+        }
     }
 
     #[test]
@@ -819,6 +1175,7 @@ mod tests {
         assert!(message.contains("firefox"));
         assert!(message.contains("safari"));
         assert!(message.contains("edge"));
+        assert!(message.contains("brave-origin"));
     }
 
     #[test]
@@ -831,6 +1188,7 @@ mod tests {
         assert!(message.contains("firefox"));
         assert!(message.contains("safari"));
         assert!(message.contains("edge"));
+        assert!(message.contains("brave-origin"));
     }
 
     #[test]
@@ -848,7 +1206,9 @@ mod tests {
     #[test]
     fn test_format_unsupported_browser_message() {
         let message = BrowserError::format_unsupported_browser_message("invalid");
-        assert!(message.contains("Available browsers: chrome, chromium, firefox, safari, edge"));
+        assert!(message.contains(
+            "Available browsers: chrome, chromium, firefox, safari, edge, brave, brave-standard, brave-origin"
+        ));
     }
 
     #[test]
@@ -879,6 +1239,14 @@ mod tests {
     fn test_format_browser_not_available_message_edge() {
         let message = BrowserError::format_browser_not_available_message("edge");
         assert!(message.contains("⛔ Browser 'edge' is not available"));
+    }
+
+    #[test]
+    fn test_format_browser_not_available_message_brave() {
+        for browser in ["brave", "brave-standard", "brave-origin"] {
+            let message = BrowserError::format_browser_not_available_message(browser);
+            assert!(message.contains(&format!("⛔ Browser '{}' is not available", browser)));
+        }
     }
 
     #[test]
@@ -1059,7 +1427,8 @@ mod tests {
         let available_browsers = CookieManager::detect_available_browsers();
         // The result will depend on actual browser availability
         // But we can verify the method completes without panicking
-        assert!(available_browsers.len() <= 4); // Should not exceed the number of supported browsers
+        // Should not exceed the number of browsers we check for
+        assert!(available_browsers.len() <= BrowserType::detection_priority().len());
     }
 
     #[test]
@@ -1211,6 +1580,94 @@ mod tests {
         // We can't assert a specific value since it depends on the system
     }
 
+    // Brave Strategy Tests
+    #[test]
+    fn test_brave_standard_strategy_browser_name() {
+        let strategy = BraveStandardStrategy::new();
+        assert_eq!(strategy.browser_name(), "brave-standard");
+    }
+
+    #[test]
+    fn test_brave_origin_strategy_browser_name() {
+        let strategy = BraveOriginStrategy::new();
+        assert_eq!(strategy.browser_name(), "brave-origin");
+    }
+
+    #[test]
+    fn test_brave_strategy_availability() {
+        let strategy = BraveStrategy::new();
+        // Depends on the system, but the method should complete
+        let _is_available = strategy.is_available();
+    }
+
+    #[test]
+    fn test_brave_strategy_reports_the_edition_it_found() {
+        let strategy = BraveStrategy::new();
+
+        if strategy.is_available() {
+            // When an edition is installed, the name identifies which one
+            assert!(["brave-standard", "brave-origin"].contains(&strategy.browser_name()));
+        } else {
+            // With nothing installed there is no edition to name
+            assert_eq!(strategy.browser_name(), "brave");
+        }
+    }
+
+    #[test]
+    fn test_brave_strategy_prefers_standard_edition() {
+        let strategy = BraveStrategy::new();
+
+        if BraveStandardStrategy::new().is_available() {
+            assert_eq!(strategy.browser_name(), "brave-standard");
+        }
+    }
+
+    #[test]
+    fn test_brave_strategy_fetch_without_any_edition_errors() {
+        let strategy = BraveStrategy::new();
+
+        if !strategy.is_available() {
+            let result = strategy.fetch_cookies(vec!["example.com".to_string()]);
+            match result.unwrap_err() {
+                BrowserError::BrowserNotAvailable { browser } => {
+                    assert_eq!(browser, "brave");
+                }
+                e => panic!("Expected BrowserNotAvailable, got {:?}", e),
+            }
+        }
+    }
+
+    #[test]
+    fn test_brave_profile_roots_cover_each_platform() {
+        let roots = brave_profile_roots("Brave-Origin");
+
+        // Every candidate must name the edition's directory
+        assert!(!roots.is_empty());
+        for root in &roots {
+            assert!(root.to_string_lossy().contains("Brave-Origin"));
+        }
+
+        let joined = roots
+            .iter()
+            .map(|root| root.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(joined.contains(".config/BraveSoftware/Brave-Origin"));
+        assert!(joined.contains("Application Support/BraveSoftware/Brave-Origin"));
+        assert!(joined.contains("BraveSoftware/Brave-Origin/User Data"));
+    }
+
+    #[test]
+    fn test_brave_editions_use_separate_directories() {
+        let standard = brave_profile_roots(BRAVE_STANDARD_DIR);
+        let origin = brave_profile_roots(BRAVE_ORIGIN_DIR);
+
+        for root in &standard {
+            assert!(!origin.contains(root));
+        }
+    }
+
     // Test that all strategies implement BrowserStrategy trait
     #[test]
     fn test_all_strategies_implement_browser_strategy() {
@@ -1218,11 +1675,29 @@ mod tests {
         let chrome: Box<dyn BrowserStrategy> = Box::new(ChromeStrategy::new());
         let safari: Box<dyn BrowserStrategy> = Box::new(SafariStrategy::new());
         let edge: Box<dyn BrowserStrategy> = Box::new(EdgeStrategy::new());
+        let brave_standard: Box<dyn BrowserStrategy> = Box::new(BraveStandardStrategy::new());
+        let brave_origin: Box<dyn BrowserStrategy> = Box::new(BraveOriginStrategy::new());
 
         assert_eq!(firefox.browser_name(), "firefox");
         assert_eq!(chrome.browser_name(), "chrome");
         assert_eq!(safari.browser_name(), "safari");
         assert_eq!(edge.browser_name(), "edge");
+        assert_eq!(brave_standard.browser_name(), "brave-standard");
+        assert_eq!(brave_origin.browser_name(), "brave-origin");
+    }
+
+    #[test]
+    fn test_browser_type_strategy_names_match() {
+        // Every browser type must build the strategy it names
+        for browser_type in BrowserType::all() {
+            let strategy = browser_type.strategy();
+            assert!(
+                browser_type.reports_as(strategy.browser_name()),
+                "{} built a strategy named {}",
+                browser_type,
+                strategy.browser_name()
+            );
+        }
     }
 
     // CookieManager Tests
@@ -1237,7 +1712,7 @@ mod tests {
             // Err(BrowserNotAvailable) if browser is not available
             match result {
                 Ok(manager) => {
-                    assert_eq!(manager.browser_name(), browser_type.as_str());
+                    assert!(browser_type.reports_as(manager.browser_name()));
                 }
                 Err(BrowserError::BrowserNotAvailable { browser }) => {
                     assert_eq!(browser, browser_type.as_str());
@@ -1250,14 +1725,20 @@ mod tests {
     #[test]
     fn test_cookie_manager_with_auto_detection() {
         let result = CookieManager::with_auto_detection();
-        
-        // The result should either be Ok (if any browser is available) or 
+
+        // The result should either be Ok (if any browser is available) or
         // Err(NoBrowsersAvailable) if no browsers are available
         match result {
             Ok(manager) => {
-                // Should be one of the supported browsers
+                // Should be one of the browsers auto-detection checks for
                 let browser_name = manager.browser_name();
-                assert!(["chrome", "firefox", "safari", "edge"].contains(&browser_name));
+                assert!(
+                    BrowserType::detection_priority()
+                        .iter()
+                        .any(|browser_type| browser_type.reports_as(browser_name)),
+                    "auto-detection returned unexpected browser: {}",
+                    browser_name
+                );
             }
             Err(BrowserError::NoBrowsersAvailable) => {
                 // This is acceptable if no browsers are available on the system
@@ -1271,7 +1752,7 @@ mod tests {
         // Test with each browser type if available
         for browser_type in BrowserType::all() {
             if let Ok(manager) = CookieManager::new(browser_type.clone()) {
-                assert_eq!(manager.browser_name(), browser_type.as_str());
+                assert!(browser_type.reports_as(manager.browser_name()));
             }
         }
     }
@@ -1381,22 +1862,14 @@ mod tests {
             assert!(BrowserType::all().contains(browser));
         }
         
-        // Should be in priority order (Chrome, Firefox, Safari, Edge)
+        // Should be in the documented priority order
         let mut expected_order = Vec::new();
-        for browser_type in [BrowserType::Chrome, BrowserType::Chromium, BrowserType::Firefox, BrowserType::Safari, BrowserType::Edge] {
-            let strategy: Box<dyn BrowserStrategy> = match browser_type {
-                BrowserType::Chrome => Box::new(ChromeStrategy::new()),
-                BrowserType::Chromium => Box::new(ChromiumStrategy::new()),
-                BrowserType::Firefox => Box::new(FirefoxStrategy::new()),
-                BrowserType::Safari => Box::new(SafariStrategy::new()),
-                BrowserType::Edge => Box::new(EdgeStrategy::new()),
-            };
-            
-            if strategy.is_available() {
+        for browser_type in BrowserType::detection_priority() {
+            if browser_type.strategy().is_available() {
                 expected_order.push(browser_type);
             }
         }
-        
+
         assert_eq!(available_browsers, expected_order);
     }
 
@@ -1404,19 +1877,11 @@ mod tests {
     fn test_cookie_manager_with_fallback_preferred_available() {
         // Test fallback when preferred browser is available
         for browser_type in BrowserType::all() {
-            let strategy: Box<dyn BrowserStrategy> = match browser_type {
-                BrowserType::Chrome => Box::new(ChromeStrategy::new()),
-                BrowserType::Chromium => Box::new(ChromiumStrategy::new()),
-                BrowserType::Firefox => Box::new(FirefoxStrategy::new()),
-                BrowserType::Safari => Box::new(SafariStrategy::new()),
-                BrowserType::Edge => Box::new(EdgeStrategy::new()),
-            };
-            
-            if strategy.is_available() {
+            if browser_type.strategy().is_available() {
                 let result = CookieManager::with_fallback(Some(browser_type.clone()));
                 match result {
                     Ok(manager) => {
-                        assert_eq!(manager.browser_name(), browser_type.as_str());
+                        assert!(browser_type.reports_as(manager.browser_name()));
                     }
                     Err(e) => panic!("Unexpected error for available browser {}: {:?}", browser_type, e),
                 }
@@ -1449,9 +1914,10 @@ mod tests {
         let available_browsers = CookieManager::detect_available_browsers();
         let all_browsers = BrowserType::all();
         
-        // Find a browser that's not available
-        let unavailable_browser = all_browsers.iter().find(|&browser| !available_browsers.contains(browser));
-        
+        // Find a browser that's not available. 'brave' is an alias for whichever
+        // edition is installed, so ask the strategy rather than the detection list.
+        let unavailable_browser = all_browsers.iter().find(|&browser| !browser.strategy().is_available());
+
         if let Some(unavailable_browser) = unavailable_browser {
             let result = CookieManager::with_fallback(Some(unavailable_browser.clone()));
             
@@ -1465,11 +1931,17 @@ mod tests {
                 // If other browsers are available, should fall back to auto-detection
                 match result {
                     Ok(manager) => {
-                        // Should not be the unavailable browser
-                        assert_ne!(manager.browser_name(), unavailable_browser.as_str());
-                        // Should be one of the available browsers
                         let browser_name = manager.browser_name();
-                        assert!(["chrome", "firefox", "safari", "edge"].contains(&browser_name));
+                        // Should not be the unavailable browser
+                        assert!(!unavailable_browser.reports_as(browser_name));
+                        // Should be one of the available browsers
+                        assert!(
+                            available_browsers
+                                .iter()
+                                .any(|browser_type| browser_type.reports_as(browser_name)),
+                            "fallback returned unexpected browser: {}",
+                            browser_name
+                        );
                     }
                     Err(e) => panic!("Unexpected error during fallback: {:?}", e),
                 }
@@ -1519,3 +1991,4 @@ mod tests {
         }
     }
 }
+

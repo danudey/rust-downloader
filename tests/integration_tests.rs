@@ -65,6 +65,20 @@ mod integration_tests {
     }
 
     #[test]
+    fn test_end_to_end_browser_selection_brave() {
+        // Test complete workflow from CLI argument to cookie usage with each
+        // way of asking for Brave
+        for browser in &["brave", "brave-standard", "brave-origin"] {
+            let output = run_download_command(&["--browser", browser, "--help"]);
+
+            // Should not fail with invalid browser error
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(!stderr.contains("not supported"),
+                    "Browser '{}' should be supported but got error: {}", browser, stderr);
+        }
+    }
+
+    #[test]
     fn test_end_to_end_invalid_browser_error() {
         // Test error handling for invalid browser selection
         let output = run_download_command(&["--browser", "invalid", "http://example.com"]);
@@ -88,6 +102,9 @@ mod integration_tests {
             ("firefox", true),
             ("safari", true),
             ("edge", true),
+            ("BRAVE", true),
+            ("Brave-Origin", true),
+            ("brave-standard", true),
         ];
 
         for (browser_name, should_succeed) in test_cases {
@@ -120,7 +137,7 @@ mod integration_tests {
         // Test different browser availability scenarios
         // This test checks that the application handles browser availability gracefully
         
-        for browser in &["chrome", "firefox", "safari", "edge"] {
+        for browser in &["chrome", "firefox", "safari", "edge", "brave", "brave-standard", "brave-origin"] {
             let output = run_download_command(&["--browser", browser, "--help"]);
             
             // The help command should always work, regardless of browser availability
